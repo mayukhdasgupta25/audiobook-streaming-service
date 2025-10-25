@@ -1,0 +1,54 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+   provider = "prisma-client-js"
+}
+
+datasource db {
+   provider = "postgresql"
+   url      = env("DATABASE_URL")
+}
+
+// Basic model for streaming sessions
+model StreamingSession {
+   id        String    @id @default(cuid())
+   chapterId String
+   userId    String?
+   startTime DateTime  @default(now())
+   endTime   DateTime?
+   duration  Int? // in seconds
+
+   @@map("streaming_sessions")
+}
+
+// Transcoded chapter model for HLS streaming
+model TranscodedChapter {
+   id              String   @id @default(cuid())
+   chapterId       String
+   bitrate         Int // Bitrate in kbps
+   playlistUrl     String // URL to the HLS playlist
+   segmentsPath    String // Path to segments directory
+   storageProvider String // Storage provider used (local, s3, azure, gcs)
+   status          String   @default("pending") // pending, processing, completed, failed
+   createdAt       DateTime @default(now())
+   updatedAt       DateTime @updatedAt
+
+   @@unique([chapterId, bitrate])
+   @@map("transcoded_chapters")
+}
+
+// Transcoding job tracking
+model TranscodingJob {
+   id           String    @id @default(cuid())
+   chapterId    String
+   status       String    @default("pending") // pending, processing, completed, failed
+   progress     Float     @default(0.0) // Progress percentage (0-100)
+   errorMessage String?
+   startedAt    DateTime?
+   completedAt  DateTime?
+   createdAt    DateTime  @default(now())
+   updatedAt    DateTime  @updatedAt
+
+   @@map("transcoding_jobs")
+}

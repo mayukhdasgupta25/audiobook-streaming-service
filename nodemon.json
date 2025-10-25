@@ -1,0 +1,22 @@
+{
+  "watch": [
+    "src"
+  ],
+  "ext": "ts,js,json",
+  "ignore": [
+    "storage/**/*",
+    "dist/**/*",
+    "node_modules/**/*",
+    "tests/**/*",
+    "*.test.ts",
+    "*.spec.ts"
+  ],
+  "exec": "ts-node src/index.ts",
+  "env": {
+    "NODE_ENV": "development"
+  },
+  "signal": "SIGTERM",
+  "delay": 1000,
+  "killTimeout": 5000,
+  "restartable": "rs"
+}
