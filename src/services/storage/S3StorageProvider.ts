@@ -85,6 +85,7 @@ export class S3StorageProvider implements StorageProvider {
          const chunks: Uint8Array[] = [];
          const reader = response.Body.transformToWebStream().getReader();
 
+         // eslint-disable-next-line no-constant-condition
          while (true) {
             const { done, value } = await reader.read();
             if (done) break;

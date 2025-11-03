@@ -10,7 +10,6 @@ import express from 'express';
 import helmet from 'helmet';
 import { config } from './config/env';
 import { ErrorHandler } from './middleware/ErrorHandler';
-import { AuthMiddleware } from './middleware/AuthMiddleware';
 import { RabbitMQFactory } from './config/rabbitmq';
 import { TranscodingWorkerFactory } from './workers/TranscodingWorker';
 import { BullWorkerLauncher } from './workers/BullWorkerLauncher';
@@ -207,7 +206,8 @@ app.use((req, res) => ErrorHandler.handleNotFound(req, res));
 app.use(ErrorHandler.handleError);
 
 // Store server instance for graceful shutdown
-let server: any;
+// eslint-disable-next-line prefer-const
+let server: ReturnType<typeof app.listen> | undefined;
 
 // Graceful shutdown function
 const gracefulShutdown = async (signal: string) => {

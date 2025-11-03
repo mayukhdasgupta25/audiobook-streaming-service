@@ -85,7 +85,7 @@ export class BitrateTranscodingProcessor {
    private async updateTranscodedChapter(
       chapterId: string,
       bitrate: number,
-      result: { bitrate: number; playlist: string; segments: string[] }
+      _result: { bitrate: number; playlist: string; segments: string[] }
    ): Promise<void> {
       try {
          const playlistUrl = `bit_transcode/${chapterId}/${bitrate}k/playlist.m3u8`;

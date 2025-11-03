@@ -84,7 +84,7 @@ export class LocalStorageProvider implements StorageProvider {
    /**
     * Get a public URL for a file (for local storage, this is just the file path)
     */
-   async getFileUrl(filePath: string, expiresIn?: number): Promise<string> {
+   async getFileUrl(filePath: string): Promise<string> {
       // For local storage, we return the file path
       // In a real implementation, you might want to serve files through a web server
       return `/storage/${filePath}`;

@@ -1,15 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
 
 // Extend Express Request interface to include user
-declare global {
-   namespace Express {
-      interface Request {
-         user?: {
-            id?: string;
-            role?: string;
-         };
-         externalUserId?: string; // For external service authentication
-      }
+declare module 'express-serve-static-core' {
+   interface Request {
+      user?: {
+         id?: string;
+         role?: string;
+      };
+      externalUserId?: string; // For external service authentication
    }
 }
 
