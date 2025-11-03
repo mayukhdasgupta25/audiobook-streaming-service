@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 
 /**
  * Error handling utilities
@@ -18,7 +18,7 @@ export class ErrorHandler {
    /**
     * Global error handler
     */
-   static handleError = (err: Error, req: Request, res: Response, next: any): void => {
+   static handleError = (err: Error, req: Request, res: Response, _next: any): void => {
       console.error('Error:', err);
 
       // Default error response
@@ -69,8 +69,8 @@ export class ErrorHandler {
    /**
     * Handle async errors
     */
-   static asyncHandler = (fn: Function) => {
-      return (req: Request, res: Response, next: any) => {
+   static asyncHandler = (fn: (req: Request, res: Response, next: NextFunction) => Promise<void> | void) => {
+      return (req: Request, res: Response, next: NextFunction) => {
          Promise.resolve(fn(req, res, next)).catch(next);
       };
    };
