@@ -52,7 +52,7 @@ export class HLSStreamingService {
     * Get master playlist for a chapter
     */
    async getMasterPlaylist(options: StreamingOptions): Promise<StreamingResponse> {
-      const { chapterId, userId, clientBandwidth, preferredBitrate } = options;
+      const { chapterId, clientBandwidth, preferredBitrate } = options;
 
       try {
          // Check if chapter exists and user has access
@@ -101,8 +101,7 @@ export class HLSStreamingService {
     */
    async getVariantPlaylist(
       chapterId: string,
-      bitrate: number,
-      userId: string
+      bitrate: number
    ): Promise<StreamingResponse> {
       try {
          // Check if chapter exists and user has access
@@ -159,8 +158,7 @@ export class HLSStreamingService {
    async getSegment(
       chapterId: string,
       bitrate: number,
-      segmentId: string,
-      userId: string
+      segmentId: string
    ): Promise<StreamingResponse> {
       try {
          // Check if chapter exists and user has access
@@ -219,7 +217,7 @@ export class HLSStreamingService {
    /**
     * Get streaming status for a chapter
     */
-   async getStreamingStatus(chapterId: string, userId: string): Promise<{
+   async getStreamingStatus(chapterId: string): Promise<{
       chapterId: string;
       availableBitrates: number[];
       transcodingStatus: string;

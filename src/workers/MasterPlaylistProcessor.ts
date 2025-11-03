@@ -6,7 +6,6 @@ import Bull from 'bull';
 import { PrismaClient } from '@prisma/client';
 import { TranscodingService } from '../services/TranscodingService';
 import { MasterPlaylistJobData } from '../config/bull';
-import { config } from '../config/env';
 
 export class MasterPlaylistProcessor {
    private prisma: PrismaClient;
@@ -21,7 +20,7 @@ export class MasterPlaylistProcessor {
     * Process master playlist generation job
     */
    public async processMasterPlaylist(job: Bull.Job<MasterPlaylistJobData>): Promise<void> {
-      const { chapterId, outputDir, variantBitrates } = job.data;
+      const { chapterId, variantBitrates } = job.data;
 
       console.log(`Processing master playlist generation for chapter ${chapterId}`);
 

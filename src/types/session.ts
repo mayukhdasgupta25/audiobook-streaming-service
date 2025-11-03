@@ -1,11 +1,11 @@
 // Session type extensions for Express
-declare global {
-   namespace Express {
-      interface Session {
-         userId?: string;
-         userRole?: string;
-         isAuthenticated?: boolean;
-      }
+import 'express-session';
+
+declare module 'express-session' {
+   interface SessionData {
+      userId?: string;
+      userRole?: string;
+      isAuthenticated?: boolean;
    }
 }
 
