@@ -132,7 +132,7 @@ export class StreamingController {
          return;
       }
 
-      const response = await this.streamingService.getVariantPlaylist(chapterId, bitrate, userId);
+      const response = await this.streamingService.getVariantPlaylist(chapterId, bitrate);
 
       // Set response headers
       Object.entries(response.headers).forEach(([key, value]) => {
@@ -197,7 +197,7 @@ export class StreamingController {
          return;
       }
 
-      const response = await this.streamingService.getSegment(chapterId, bitrate, segmentId, userId);
+      const response = await this.streamingService.getSegment(chapterId, bitrate, segmentId);
 
       // Set response headers
       Object.entries(response.headers).forEach(([key, value]) => {
@@ -255,7 +255,7 @@ export class StreamingController {
          return;
       }
 
-      const status = await this.streamingService.getStreamingStatus(chapterId, userId);
+      const status = await this.streamingService.getStreamingStatus(chapterId);
 
       ResponseHandler.success(res, status, MessageHandler.getStreamingMessageFromRequest(req, 'status_retrieved'));
    });
