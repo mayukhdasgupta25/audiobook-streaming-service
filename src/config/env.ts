@@ -12,6 +12,25 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
  * Environment configuration for the streaming service
  * Provides type-safe access to environment variables with defaults
  */
+// Construct DATABASE_URL if not provided directly
+const getDatabaseUrl = (): string => {
+   if (process.env.DATABASE_URL) {
+      return process.env.DATABASE_URL;
+   }
+   // Construct from individual DB variables
+   const host = process.env['DB_HOST'] || 'localhost';
+   const port = process.env['DB_PORT'] || '5432';
+   const name = process.env['DB_NAME'] || 'streaming_dev';
+   const user = process.env['DB_USER'] || 'postgres';
+   const password = process.env['DB_PASSWORD'] || '';
+   return `postgresql://${user}:${password}@${host}:${port}/${name}`;
+};
+
+// Set DATABASE_URL for Prisma Migrate and other tools
+if (!process.env.DATABASE_URL) {
+   process.env.DATABASE_URL = getDatabaseUrl();
+}
+
 export const config = {
    // Server configuration
    NODE_ENV: nodeEnv,
@@ -21,6 +40,7 @@ export const config = {
    DB_NAME: process.env['DB_NAME'] || 'streaming_dev',
    DB_USER: process.env['DB_USER'] || 'postgres',
    DB_PASSWORD: process.env['DB_PASSWORD'] || '',
+   DATABASE_URL: process.env.DATABASE_URL,
 
    // Client configuration
    CLIENT_URL: process.env.CLIENT_URL || 'http://localhost:8081',

@@ -16,6 +16,7 @@ import { BullWorkerLauncher } from './workers/BullWorkerLauncher';
 import { BullBoardManager } from './config/bullBoard';
 import { createStreamingRoutes } from './routes/streamingRoutes';
 import { PrismaClient } from '@prisma/client';
+import { adapter } from './config/prisma.config';
 
 const app = express();
 
@@ -57,8 +58,8 @@ app.use((req, res, next) => {
    next();
 });
 
-// Initialize Prisma client
-const prisma = new PrismaClient();
+// Initialize Prisma client with adapter
+const prisma = new PrismaClient({ adapter });
 
 // Initialize RabbitMQ, storage provider, and transcoding worker
 (async (): Promise<void> => {
@@ -71,7 +72,7 @@ const prisma = new PrismaClient();
       await RabbitMQFactory.initialize();
       console.log('RabbitMQ initialized successfully');
 
-      // Start transcoding worker
+      // Start transcoding worke
       await TranscodingWorkerFactory.startWorker(prisma);
 
       // Start Bull workers

@@ -12,13 +12,13 @@
     "test:coverage": "jest --coverage",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
-    "db:generate": "prisma generate",
-    "db:push": "prisma db push",
-    "db:migrate": "prisma migrate dev",
-    "db:reset": "prisma migrate reset",
+    "db:generate": "node scripts/prisma-env.js generate",
+    "db:push": "node scripts/prisma-env.js db push",
+    "db:migrate": "node scripts/prisma-env.js migrate dev",
+    "db:reset": "node scripts/prisma-env.js migrate reset",
     "db:seed": "ts-node prisma/seed.ts",
     "db:delete-seed": "ts-node prisma/delete-seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "node scripts/prisma-env.js studio"
   },
   "keywords": [
     "typescript",
@@ -33,6 +33,7 @@
     "@aws-sdk/s3-request-presigner": "^3.911.0",
     "@bull-board/api": "^5.10.0",
     "@bull-board/express": "^5.10.0",
+    "@prisma/adapter-pg": "^7.0.0",
     "@prisma/client": "^6.17.1",
     "@types/amqplib": "^0.10.7",
     "@types/express-session": "^1.18.2",
@@ -47,6 +48,7 @@
     "helmet": "^7.1.0",
     "ioredis": "^5.8.1",
     "morgan": "^1.10.0",
+    "pg": "^8.11.3",
     "prisma": "^6.17.1",
     "redis": "^5.8.3"
   },
@@ -58,6 +60,7 @@
     "@types/jest": "^29.5.8",
     "@types/morgan": "^1.9.9",
     "@types/node": "^20.10.5",
+    "@types/pg": "^8.10.9",
     "@types/supertest": "^6.0.3",
     "@typescript-eslint/eslint-plugin": "^8.15.0",
     "@typescript-eslint/parser": "^8.15.0",
