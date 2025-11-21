@@ -26,6 +26,11 @@ export interface TranscodingJobData {
    retryCount?: number;
 }
 
+export interface ChapterDeletionMessage {
+   chapterId: string;
+   timestamp: string;
+}
+
 export class RabbitMQConnection {
    private static instance: RabbitMQConnection;
    private connection: amqp.Connection | null = null;
@@ -121,6 +126,9 @@ export class RabbitMQConnection {
             await this.assertQueueWithFallback(queueName);
          }
 
+         // Setup chapter deletion queue
+         await this.assertQueueWithFallback('audiobook.chapters.deleted');
+
          // Bind queues to exchange
          await this.channel.bindQueue('audiobook.transcode.priority', 'transcoding.exchange', 'priority');
          await this.channel.bindQueue('audiobook.transcode.normal', 'transcoding.exchange', 'normal');
@@ -146,7 +154,8 @@ export class RabbitMQConnection {
       const queueTTLMap: { [key: string]: number } = {
          'audiobook.transcode.priority': 3600000, // 1 hour
          'audiobook.transcode.normal': 3600000,    // 1 hour  
-         'audiobook.transcode.low': 7200000       // 2 hours
+         'audiobook.transcode.low': 7200000,       // 2 hours
+         'audiobook.chapters.deleted': 3600000     // 1 hour (matches existing queue configuration)
       };
 
       const ttl = queueTTLMap[queueName] || config.RABBITMQ_MESSAGE_TTL;
@@ -160,12 +169,33 @@ export class RabbitMQConnection {
          }
       };
 
+      // Basic configuration without TTL (used as fallback)
+      const configWithoutTTL = {
+         durable: true,
+         exclusive: false,
+         autoDelete: false
+      };
+
       try {
          await this.channel.assertQueue(queueName, configWithTTL);
          console.log(`Successfully connected to queue ${queueName} with TTL ${ttl}`);
       } catch (error: any) {
-         console.error(`Failed to connect to queue ${queueName}:`, error);
-         throw error;
+         // If TTL configuration fails (queue already exists with different TTL), try without TTL
+         if (error.code === 406) {
+            console.warn(
+               `Queue ${queueName} already exists with different TTL. Attempting to connect without TTL configuration...`
+            );
+            try {
+               await this.channel.assertQueue(queueName, configWithoutTTL);
+               console.log(`Successfully connected to existing queue ${queueName} (using existing TTL configuration)`);
+            } catch (fallbackError: any) {
+               console.error(`Failed to connect to queue ${queueName} even without TTL:`, fallbackError);
+               throw fallbackError;
+            }
+         } else {
+            console.error(`Failed to connect to queue ${queueName}:`, error);
+            throw error;
+         }
       }
    }
 
@@ -254,6 +284,49 @@ export class RabbitMQConnection {
          console.log(`Started consuming transcoding jobs from ${fullQueueName}`);
       } catch (error) {
          console.error(`Error setting up consumer for ${fullQueueName}:`, error);
+         throw error;
+      }
+   }
+
+   /**
+    * Generic consume method for any queue
+    * Consumes messages from a specified queue and processes them with a callback
+    */
+   public async consume<T>(
+      queueName: string,
+      callback: (data: T, message: amqp.Message) => Promise<void>
+   ): Promise<void> {
+      if (!this.channel) {
+         throw new Error('Channel not available');
+      }
+
+      try {
+         await this.channel.consume(queueName, async (message: amqp.Message | null) => {
+            if (!message) {
+               return;
+            }
+
+            try {
+               const data: T = JSON.parse(message.content.toString());
+               console.log(`Processing message from queue ${queueName}`);
+
+               await callback(data, message);
+
+               // Acknowledge the message after successful processing
+               this.channel!.ack(message);
+            } catch (error) {
+               console.error(`Error processing message from queue ${queueName}:`, error);
+
+               // Reject and requeue the message on error
+               this.channel!.nack(message, false, true);
+            }
+         }, {
+            noAck: false
+         });
+
+         console.log(`Started consuming messages from ${queueName}`);
+      } catch (error) {
+         console.error(`Error setting up consumer for ${queueName}:`, error);
          throw error;
       }
    }
