@@ -34,7 +34,7 @@ if (!process.env.DATABASE_URL) {
 export const config = {
    // Server configuration
    NODE_ENV: nodeEnv,
-   STREAMING_PORT: parseInt(process.env.STREAMING_PORT || '8082', 10),
+   STREAMING_PORT: parseInt(process.env.STREAMING_PORT || '8083', 10),
    DB_HOST: process.env['DB_HOST'] || 'localhost',
    DB_PORT: parseInt(process.env['DB_PORT'] || '5432', 10),
    DB_NAME: process.env['DB_NAME'] || 'streaming_dev',
