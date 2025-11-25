@@ -14,14 +14,20 @@ export const createStreamingRoutes = (prisma: PrismaClient) => {
    // This ensures all /api/v1/stream/* endpoints require user_id header
    router.use(AuthMiddleware.validateExternalService);
 
-   // Master playlist endpoint
+   // HLS Master playlist endpoint
    router.get('/chapters/:chapterId/master.m3u8', streamingController.getMasterPlaylist);
 
-   // Variant playlist endpoint
+   // HLS Variant playlist endpoint
    router.get('/chapters/:chapterId/:bitrate/playlist.m3u8', streamingController.getVariantPlaylist);
 
-   // Segment endpoint
+   // HLS Segment endpoint
    router.get('/chapters/:chapterId/:bitrate/segments/:segmentId', streamingController.getSegment);
+
+   // DASH Manifest endpoint
+   router.get('/chapters/:chapterId/manifest.mpd', streamingController.getDASHManifest);
+
+   // DASH Segment endpoint
+   router.get('/chapters/:chapterId/:bitrate/dash-segments/:segmentId', streamingController.getDASHSegment);
 
    // Status endpoint
    router.get('/chapters/:chapterId/status', streamingController.getStreamingStatus);
