@@ -5,15 +5,18 @@
 import Bull from 'bull';
 import { PrismaClient } from '@prisma/client';
 import { TranscodingService } from '../services/TranscodingService';
+import { DASHStreamingService } from '../services/DASHStreamingService';
 import { MasterPlaylistJobData } from '../config/bull';
 
 export class MasterPlaylistProcessor {
    private prisma: PrismaClient;
    private transcodingService: TranscodingService;
+   private dashStreamingService: DASHStreamingService;
 
    constructor(prisma: PrismaClient) {
       this.prisma = prisma;
       this.transcodingService = new TranscodingService(prisma);
+      this.dashStreamingService = new DASHStreamingService(prisma);
    }
 
    /**
@@ -38,19 +41,28 @@ export class MasterPlaylistProcessor {
          // Update job progress
          await job.progress(30);
 
-         // Generate master playlist for completed bitrates
+         // Generate HLS master playlist for completed bitrates
          const masterPlaylist = await this.generateMasterPlaylistForBitrates(chapterId, completedBitrates);
+
+         // Update job progress
+         await job.progress(50);
+
+         // Generate DASH manifest for completed bitrates
+         const dashManifest = await this.generateDASHManifestForBitrates(chapterId, completedBitrates);
 
          // Update job progress
          await job.progress(70);
 
-         // Upload master playlist to storage
+         // Upload HLS master playlist to storage
          await this.uploadMasterPlaylist(chapterId, masterPlaylist);
+
+         // Upload DASH manifest to storage
+         await this.uploadDASHManifest(chapterId, dashManifest);
 
          // Update job progress
          await job.progress(100);
 
-         console.log(`Successfully completed master playlist generation for chapter ${chapterId}`);
+         console.log(`Successfully completed master playlist and DASH manifest generation for chapter ${chapterId}`);
 
       } catch (error: any) {
          console.error(`Master playlist generation failed for chapter ${chapterId}:`, error);
@@ -134,6 +146,34 @@ export class MasterPlaylistProcessor {
    }
 
    /**
+    * Generate DASH manifest for specific bitrates
+    */
+   private async generateDASHManifestForBitrates(chapterId: string, bitrates: number[]): Promise<string> {
+      try {
+         // Get available bitrates info
+         const availableBitrates = await this.dashStreamingService.getAvailableBitrates(chapterId);
+         const filteredBitrates = availableBitrates.filter(b => bitrates.includes(b));
+
+         if (filteredBitrates.length === 0) {
+            throw new Error('No completed transcoded chapters found for DASH manifest');
+         }
+
+         // Generate DASH manifest using DASHStreamingService
+         const manifestInfo = await this.dashStreamingService.generateDASHManifest(
+            chapterId,
+            filteredBitrates,
+            undefined,
+            undefined
+         );
+
+         return manifestInfo.manifest;
+      } catch (error: any) {
+         console.error('Error generating DASH manifest:', error);
+         throw error;
+      }
+   }
+
+   /**
     * Upload master playlist to storage
     */
    private async uploadMasterPlaylist(chapterId: string, masterPlaylist: string): Promise<void> {
@@ -152,6 +192,29 @@ export class MasterPlaylistProcessor {
          console.log(`Master playlist uploaded for chapter ${chapterId}`);
       } catch (error: any) {
          console.error('Error uploading master playlist:', error);
+         throw error;
+      }
+   }
+
+   /**
+    * Upload DASH manifest to storage
+    */
+   private async uploadDASHManifest(chapterId: string, dashManifest: string): Promise<void> {
+      try {
+         // Initialize storage provider
+         await this.transcodingService['initializeStorageProvider']();
+
+         // Upload DASH manifest to bit_transcode/{chapter_id} directory
+         const dashManifestPath = `bit_transcode/${chapterId}/manifest.mpd`;
+         await this.transcodingService['storageProvider']!.uploadFile(
+            dashManifestPath,
+            Buffer.from(dashManifest),
+            'application/dash+xml'
+         );
+
+         console.log(`DASH manifest uploaded for chapter ${chapterId}`);
+      } catch (error: any) {
+         console.error('Error uploading DASH manifest:', error);
          throw error;
       }
    }

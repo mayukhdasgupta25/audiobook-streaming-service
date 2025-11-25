@@ -185,19 +185,22 @@ export class HLSStreamingService {
          const segmentPath = `${transcodedChapter.segmentsPath}/${segmentId}`;
 
          // Try to get from cache first
-         let segmentContent = await this.cacheService.getCachedSegment(segmentId);
+         let segmentContent = await this.cacheService.getCachedSegment(chapterId, bitrate, segmentId);
 
          if (!segmentContent) {
             // Get from storage with fallback
-            segmentContent = await this.cacheService.getSegmentWithFallback(segmentId, segmentPath);
+            segmentContent = await this.cacheService.getSegmentWithFallback(chapterId, bitrate, segmentId, segmentPath);
 
             if (!segmentContent) {
                return this.createErrorResponse('Segment not found', 404);
             }
          }
 
+         // Determine content type based on segment extension
+         const contentType = segmentId.endsWith('.m4s') ? 'video/mp4' : 'video/mp2t';
+
          return {
-            contentType: 'video/mp2t',
+            contentType,
             content: segmentContent,
             headers: {
                'Cache-Control': 'public, max-age=3600', // 1 hour
@@ -359,8 +362,8 @@ export class HLSStreamingService {
          preferredBitrate
       );
 
-      // Generate master playlist content
-      let masterPlaylist = '#EXTM3U\n#EXT-X-VERSION:3\n\n';
+      // Generate master playlist content (CMAF-compliant HLS)
+      let masterPlaylist = '#EXTM3U\n#EXT-X-VERSION:7\n\n';
 
       for (const bitrateInfo of bitrateInfos) {
          masterPlaylist += `#EXT-X-STREAM-INF:BANDWIDTH=${bitrateInfo.bandwidth},CODECS="mp4a.40.2"`;
@@ -391,9 +394,43 @@ export class HLSStreamingService {
       try {
          // List segments in storage
          const segments = await this.storageProvider.listFiles(transcodedChapter.segmentsPath);
-         const segmentFiles = segments.filter(seg => seg.endsWith('.ts')).sort();
+         const segmentFiles = segments.filter(seg => seg.endsWith('.m4s') || seg.endsWith('.ts')).sort();
 
-         let playlist = '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n\n';
+         // Find init.mp4 file in the segments path
+         // segmentsPath is like: bit_transcode/{chapterId}/{bitrate}k/
+         // init.mp4 should be in the same directory as segments
+         const initFiles = segments.filter(seg => seg.includes('init.mp4') || seg.endsWith('/init.mp4'));
+         let initUri = 'init.mp4'; // Default fallback
+
+         console.log('initFiles', initFiles);
+         if (initFiles.length > 0) {
+            // Get the init file path
+            const initFilePath = initFiles[0];
+
+            // Extract the filename or relative path
+            // Since segments are referenced by filename only, init.mp4 should also be just the filename
+            // But if the path includes directory structure, extract the relative part
+            if (initFilePath.includes('/')) {
+               // Extract the relative path from segmentsPath
+               const segmentsPathNormalized = transcodedChapter.segmentsPath.endsWith('/')
+                  ? transcodedChapter.segmentsPath
+                  : `${transcodedChapter.segmentsPath}/`;
+
+               if (initFilePath.startsWith(segmentsPathNormalized)) {
+                  // Init file is in the same directory or subdirectory
+                  const relativePath = initFilePath.substring(segmentsPathNormalized.length);
+                  initUri = relativePath || 'init.mp4';
+               } else {
+                  // Extract just the filename
+                  initUri = initFilePath.split('/').pop() || 'init.mp4';
+               }
+            } else {
+               initUri = initFilePath;
+            }
+         }
+
+         console.log('initUri', initUri);
+         let playlist = `#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:10\n#EXT-X-MAP:URI="${initUri}"\n\n`;
 
          for (const segmentFile of segmentFiles) {
             const segmentName = segmentFile.split('/').pop();
@@ -485,7 +522,7 @@ export class HLSStreamingService {
 
          // Preload segments into cache
          const segments = await this.storageProvider.listFiles(transcodedChapter.segmentsPath);
-         const segmentFiles = segments.filter(seg => seg.endsWith('.ts'));
+         const segmentFiles = segments.filter(seg => seg.endsWith('.m4s') || seg.endsWith('.ts'));
 
          await this.cacheService.preloadChapterSegments(chapterId, bitrate, segmentFiles.length);
 

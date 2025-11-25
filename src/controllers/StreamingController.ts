@@ -5,6 +5,7 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { HLSStreamingService, StreamingOptions } from '../services/HLSStreamingService';
+import { DASHStreamingService, DASHStreamingOptions } from '../services/DASHStreamingService';
 import { TranscodingService } from '../services/TranscodingService';
 import { ErrorHandler } from '../middleware/ErrorHandler';
 import { ResponseHandler } from '../utils/ResponseHandler';
@@ -13,11 +14,13 @@ import { MessageHandler } from '../utils/MessageHandler';
 export class StreamingController {
    private prisma: PrismaClient;
    private streamingService: HLSStreamingService;
+   private dashStreamingService: DASHStreamingService;
    private transcodingService: TranscodingService;
 
    constructor(prisma: PrismaClient) {
       this.prisma = prisma;
       this.streamingService = new HLSStreamingService(prisma);
+      this.dashStreamingService = new DASHStreamingService(prisma);
       this.transcodingService = new TranscodingService(prisma);
    }
 
@@ -476,5 +479,134 @@ export class StreamingController {
             error: error.message
          });
       }
+   });
+
+   /**
+    * @swagger
+    * /api/v1/stream/chapters/{chapterId}/manifest.mpd:
+    *   get:
+    *     summary: Get DASH manifest (MPD) for chapter
+    *     description: Returns the DASH Media Presentation Description containing all available bitrates for a chapter
+    *     tags: [Streaming]
+    *     parameters:
+    *       - name: chapterId
+    *         in: path
+    *         required: true
+    *         schema:
+    *           type: string
+    *         description: Chapter ID
+    *       - name: bandwidth
+    *         in: query
+    *         schema:
+    *           type: integer
+    *         description: Client bandwidth in bps (for bitrate selection)
+    *       - name: bitrate
+    *         in: query
+    *         schema:
+    *           type: integer
+    *         description: Preferred bitrate in kbps
+    *     responses:
+    *       200:
+    *         description: DASH manifest returned successfully
+    *         content:
+    *           application/dash+xml:
+    *             schema:
+    *               type: string
+    *       404:
+    *         description: Chapter not found or no transcoded versions available
+    *       500:
+    *         description: Internal server error
+    */
+   getDASHManifest = ErrorHandler.asyncHandler(async (req: Request, res: Response): Promise<void> => {
+      const chapterId = req.params['chapterId'] as string;
+      const userId = (req as any).user?.id;
+      const clientBandwidth = req.query['bandwidth'] ? parseInt(req.query['bandwidth'] as string, 10) : undefined;
+      const preferredBitrate = req.query['bitrate'] ? parseInt(req.query['bitrate'] as string, 10) : undefined;
+
+      if (!userId) {
+         ResponseHandler.unauthorized(res, MessageHandler.getUnauthorizedMessageFromRequest(req, 'not_authenticated'));
+         return;
+      }
+
+      const dashOptions: DASHStreamingOptions = {
+         chapterId,
+         userId,
+         ...(clientBandwidth !== undefined && { clientBandwidth }),
+         ...(preferredBitrate !== undefined && { preferredBitrate })
+      };
+
+      const response = await this.dashStreamingService.getDASHManifest(dashOptions);
+
+      // Set response headers
+      Object.entries(response.headers).forEach(([key, value]) => {
+         res.setHeader(key, value);
+      });
+
+      res.status(response.statusCode).send(response.content);
+   });
+
+   /**
+    * @swagger
+    * /api/v1/stream/chapters/{chapterId}/{bitrate}/dash-segments/{segmentId}:
+    *   get:
+    *     summary: Get DASH segment
+    *     description: Returns a specific DASH segment file (fMP4) for streaming
+    *     tags: [Streaming]
+    *     parameters:
+    *       - name: chapterId
+    *         in: path
+    *         required: true
+    *         schema:
+    *           type: string
+    *         description: Chapter ID
+    *       - name: bitrate
+    *         in: path
+    *         required: true
+    *         schema:
+    *           type: integer
+    *         description: Bitrate in kbps
+    *       - name: segmentId
+    *         in: path
+    *         required: true
+    *         schema:
+    *           type: string
+    *         description: Segment ID (e.g., segment_000.m4s or init.mp4)
+    *     responses:
+    *       200:
+    *         description: Segment returned successfully
+    *         content:
+    *           video/mp4:
+    *             schema:
+    *               type: string
+    *               format: binary
+    *       404:
+    *         description: Segment not found
+    *       500:
+    *         description: Internal server error
+    */
+   getDASHSegment = ErrorHandler.asyncHandler(async (req: Request, res: Response): Promise<void> => {
+      const chapterId = req.params['chapterId'] as string;
+      const bitrate = parseInt(req.params['bitrate'] as string, 10);
+      const segmentId = req.params['segmentId'] as string;
+      const userId = (req as any).user?.id;
+
+      if (!userId) {
+         ResponseHandler.unauthorized(res, MessageHandler.getUnauthorizedMessageFromRequest(req, 'not_authenticated'));
+         return;
+      }
+
+      if (isNaN(bitrate)) {
+         ResponseHandler.validationError(res, MessageHandler.getValidationMessageFromRequest(req, 'invalid_bitrate'));
+         return;
+      }
+
+      const response = await this.dashStreamingService.getDASHSegment(chapterId, bitrate, segmentId);
+
+      // Set response headers
+      Object.entries(response.headers).forEach(([key, value]) => {
+         res.setHeader(key, value);
+      });
+
+      res.status(response.statusCode).send(response.content);
    });
 }
