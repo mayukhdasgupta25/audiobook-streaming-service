@@ -18,6 +18,7 @@ import { BullBoardManager } from './config/bullBoard';
 import { createStreamingRoutes } from './routes/streamingRoutes';
 import { PrismaClient } from '@prisma/client';
 import { adapter } from './config/prisma.config';
+import path from 'path';
 
 const app = express();
 
@@ -43,6 +44,14 @@ app.use(session({
       maxAge: 24 * 60 * 60 * 1000 // 24 hours
    }
 }));
+
+// Serve transcoded segments statically (before authentication middleware)
+// Physical dir: storage/bit_transcode
+// Public URL prefix: /bit_transcode
+app.use(
+   '/bit_transcode',
+   express.static(path.join(process.cwd(), 'storage', 'bit_transcode'))
+);
 
 // Session validation middleware (exclude Bull Board and streaming routes)
 app.use((req, res, next) => {

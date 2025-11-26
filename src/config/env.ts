@@ -74,9 +74,10 @@ export const config = {
    FFPROBE_PATH: process.env.FFPROBE_PATH || 'ffprobe',
 
    // Streaming configuration
-   HLS_SEGMENT_DURATION: parseInt(process.env['HLS_SEGMENT_DURATION'] || '10', 10), // seconds
+   HLS_SEGMENT_DURATION: parseInt(process.env['HLS_SEGMENT_DURATION'] || '4', 10), // seconds
    TRANSCODING_BITRATES: process.env['TRANSCODING_BITRATES']?.split(',').map(b => parseInt(b, 10)) || [64, 128, 256], // kbps
    STREAMING_CACHE_TTL: parseInt(process.env['STREAMING_CACHE_TTL'] || '3600', 10), // seconds
+   STREAMING_BASE_URL: process.env['STREAMING_BASE_URL'] || `http://172.20.10.2:${parseInt(process.env.STREAMING_PORT || '8083', 10)}`,
 
    // Rate limiting
    RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10), // 15 minutes
@@ -106,4 +107,7 @@ export const config = {
    // Analytics configuration
    ANALYTICS_ENABLED: process.env.ANALYTICS_ENABLED === 'true',
    ANALYTICS_RETENTION_DAYS: parseInt(process.env.ANALYTICS_RETENTION_DAYS || '30', 10),
+
+   JWKS_ENDPOINT: process.env['JWKS_ENDPOINT'] || 'http://localhost:8080/auth/.well-known/jwks.json',
+   AUTH_SERVICE_URL: process.env['AUTH_SERVICE_URL'] || 'http://localhost:8080'
 };

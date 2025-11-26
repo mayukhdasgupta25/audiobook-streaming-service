@@ -6,7 +6,7 @@ import { PrismaClient } from '@prisma/client';
 import { StreamingCacheService, StreamingCacheFactory } from './StreamingCacheService';
 import { StorageProvider } from './storage/StorageProvider';
 import { StorageFactory } from './storage/StorageFactory';
-// import { config } from '../config/env';
+import { config } from '../config/env';
 
 export interface StreamingOptions {
    chapterId: string;
@@ -348,7 +348,7 @@ export class HLSStreamingService {
             bitrateInfos.push({
                bitrate,
                bandwidth: bitrate * 1000, // Convert kbps to bps
-               playlistUrl: `bit_transcode/${chapterId}/${bitrate}k/playlist.m3u8`,
+               playlistUrl: `bit_transcode/${chapterId}/${bitrate}k/playlist.m3u8`, // Keep for reference, but we'll use absolute URL in generation
                segmentsPath: transcodedChapter.segmentsPath,
                available: true
             });
@@ -363,6 +363,7 @@ export class HLSStreamingService {
       );
 
       // Generate master playlist content (CMAF-compliant HLS)
+      const baseUrl = config.STREAMING_BASE_URL;
       let masterPlaylist = '#EXTM3U\n#EXT-X-VERSION:7\n\n';
 
       for (const bitrateInfo of bitrateInfos) {
@@ -372,7 +373,9 @@ export class HLSStreamingService {
             masterPlaylist += ',RESOLUTION=0x0';
          }
 
-         masterPlaylist += `\n${bitrateInfo.playlistUrl}\n\n`;
+         // Use complete absolute URL for playlist
+         const playlistUrl = `${baseUrl}/bit_transcode/${chapterId}/${bitrateInfo.bitrate}k/playlist.m3u8`;
+         masterPlaylist += `\n${playlistUrl}\n\n`;
       }
 
       return {
@@ -387,8 +390,8 @@ export class HLSStreamingService {
     * Generate variant playlist from segments
     */
    private async generateVariantPlaylist(
-      _chapterId: string,
-      _bitrate: number,
+      chapterId: string,
+      bitrate: number,
       transcodedChapter: any
    ): Promise<string> {
       try {
@@ -396,45 +399,42 @@ export class HLSStreamingService {
          const segments = await this.storageProvider.listFiles(transcodedChapter.segmentsPath);
          const segmentFiles = segments.filter(seg => seg.endsWith('.m4s') || seg.endsWith('.ts')).sort();
 
-         // Find init.mp4 file in the segments path
+         // Extract chapterId and bitrate from segmentsPath if not provided
          // segmentsPath is like: bit_transcode/{chapterId}/{bitrate}k/
-         // init.mp4 should be in the same directory as segments
-         const initFiles = segments.filter(seg => seg.includes('init.mp4') || seg.endsWith('/init.mp4'));
-         let initUri = 'init.mp4'; // Default fallback
+         let extractedChapterId = chapterId;
+         let extractedBitrate = bitrate;
 
-         console.log('initFiles', initFiles);
-         if (initFiles.length > 0) {
-            // Get the init file path
-            const initFilePath = initFiles[0];
-
-            // Extract the filename or relative path
-            // Since segments are referenced by filename only, init.mp4 should also be just the filename
-            // But if the path includes directory structure, extract the relative part
-            if (initFilePath.includes('/')) {
-               // Extract the relative path from segmentsPath
-               const segmentsPathNormalized = transcodedChapter.segmentsPath.endsWith('/')
-                  ? transcodedChapter.segmentsPath
-                  : `${transcodedChapter.segmentsPath}/`;
-
-               if (initFilePath.startsWith(segmentsPathNormalized)) {
-                  // Init file is in the same directory or subdirectory
-                  const relativePath = initFilePath.substring(segmentsPathNormalized.length);
-                  initUri = relativePath || 'init.mp4';
-               } else {
-                  // Extract just the filename
-                  initUri = initFilePath.split('/').pop() || 'init.mp4';
-               }
-            } else {
-               initUri = initFilePath;
+         if (transcodedChapter.segmentsPath) {
+            const pathMatch = transcodedChapter.segmentsPath.match(/bit_transcode\/([^/]+)\/(\d+)k/);
+            if (pathMatch) {
+               extractedChapterId = pathMatch[1];
+               extractedBitrate = parseInt(pathMatch[2], 10);
             }
          }
 
-         console.log('initUri', initUri);
-         let playlist = `#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:10\n#EXT-X-MAP:URI="${initUri}"\n\n`;
+         // Construct base URL for segments
+         const baseUrl = config.STREAMING_BASE_URL;
+         const segmentsBasePath = `bit_transcode/${extractedChapterId}/${extractedBitrate}k`;
+
+         // Find init.mp4 file in the segments path
+         const initFiles = segments.filter(seg => seg.includes('init.mp4') || seg.endsWith('/init.mp4'));
+         let initUri = `${baseUrl}/${segmentsBasePath}/init.mp4`; // Default absolute URL
+
+         if (initFiles.length > 0) {
+            // Use absolute URL for init file
+            initUri = `${baseUrl}/${segmentsBasePath}/init.mp4`;
+         }
+
+         // EXT-X-TARGETDURATION should be at least as large as the longest segment duration
+         // Using 5 seconds to accommodate 4-second segments with some buffer
+         let playlist = `#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:5\n#EXT-X-MAP:URI="${initUri}"\n\n`;
 
          for (const segmentFile of segmentFiles) {
             const segmentName = segmentFile.split('/').pop();
-            playlist += `#EXTINF:10.0,\n${segmentName}\n`;
+            // Construct absolute URL for segment
+            const segmentUrl = `${baseUrl}/${segmentsBasePath}/${segmentName}`;
+            // Use config value for segment duration to match actual transcoded segments
+            playlist += `#EXTINF:${config.HLS_SEGMENT_DURATION}.0,\n${segmentUrl}\n`;
          }
 
          playlist += '#EXT-X-ENDLIST\n';

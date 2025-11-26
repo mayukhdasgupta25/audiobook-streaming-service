@@ -160,7 +160,7 @@ export class TranscodingService {
          }
 
          // Generate master playlist
-         const masterPlaylist = this.generateMasterPlaylist(variantPlaylists, outputDir);
+         const masterPlaylist = this.generateMasterPlaylist(variantPlaylists, id);
 
          // Upload master playlist to bit_transcode/{chapter_id} directory
          const masterPlaylistPath = `bit_transcode/${id}/master.m3u8`;
@@ -283,7 +283,8 @@ export class TranscodingService {
                `-hls_segment_type fmp4`,
                `-hls_segment_filename ${segmentPattern}`,
                `-hls_fmp4_init_filename ${tempInitFilename}`,
-               '-hls_flags independent_segments'
+               '-hls_flags independent_segments',
+               '-avoid_negative_ts make_zero'
             ])
             .output(playlistPath);
 
@@ -318,6 +319,37 @@ export class TranscodingService {
                      new RegExp(tempInitFilename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
                      'init.mp4'
                   );
+
+                  // Convert relative paths to absolute URLs
+                  const baseUrl = config.STREAMING_BASE_URL;
+                  const segmentsBasePath = `bit_transcode/${id}/${bitrate}k`;
+
+                  // Replace init.mp4 in #EXT-X-MAP:URI with absolute URL
+                  playlistContent = playlistContent.replace(
+                     /#EXT-X-MAP:URI="([^"]+)"/g,
+                     (match, uri) => {
+                        // If URI is already absolute, keep it; otherwise make it absolute
+                        if (uri.startsWith('http://') || uri.startsWith('https://')) {
+                           return match;
+                        }
+                        const absoluteUri = uri === 'init.mp4'
+                           ? `${baseUrl}/${segmentsBasePath}/init.mp4`
+                           : `${baseUrl}/${segmentsBasePath}/${uri}`;
+                        return `#EXT-X-MAP:URI="${absoluteUri}"`;
+                     }
+                  );
+
+                  // Replace relative segment paths with absolute URLs
+                  // Match lines that are segment filenames (not starting with #)
+                  playlistContent = playlistContent.split('\n').map(line => {
+                     const trimmedLine = line.trim();
+                     // Skip if line is empty, starts with #, or is already an absolute URL
+                     if (!trimmedLine || trimmedLine.startsWith('#') || trimmedLine.startsWith('http://') || trimmedLine.startsWith('https://')) {
+                        return line;
+                     }
+                     // This is a segment filename, convert to absolute URL
+                     return `${baseUrl}/${segmentsBasePath}/${trimmedLine}`;
+                  }).join('\n');
 
                   // Write updated playlist content back to file
                   await fs.writeFile(playlistPath, playlistContent, 'utf-8');
@@ -431,13 +463,15 @@ export class TranscodingService {
     */
    public generateMasterPlaylist(
       variantPlaylists: Array<{ bitrate: number; playlist: string; segments: string[] }>,
-      _outputDir: string
+      chapterId: string
    ): string {
+      const baseUrl = config.STREAMING_BASE_URL;
       let masterPlaylist = '#EXTM3U\n#EXT-X-VERSION:7\n\n';
 
       for (const variant of variantPlaylists) {
          const bandwidth = variant.bitrate * 1000; // Convert kbps to bps
-         const playlistUrl = `${variant.bitrate}k/playlist.m3u8`;
+         // Use complete absolute URL for playlist
+         const playlistUrl = `${baseUrl}/bit_transcode/${chapterId}/${variant.bitrate}k/playlist.m3u8`;
 
          masterPlaylist += `#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},CODECS="mp4a.40.2"\n`;
          masterPlaylist += `${playlistUrl}\n\n`;
