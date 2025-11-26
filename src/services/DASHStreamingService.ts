@@ -6,6 +6,7 @@ import { PrismaClient } from '@prisma/client';
 import { StreamingCacheService, StreamingCacheFactory } from './StreamingCacheService';
 import { StorageProvider } from './storage/StorageProvider';
 import { StorageFactory } from './storage/StorageFactory';
+import { config } from '../config/env';
 
 export interface DASHStreamingOptions {
    chapterId: string;
@@ -214,8 +215,8 @@ export class DASHStreamingService {
          preferredBitrate
       );
 
-      // Get segment duration from config (default 10 seconds)
-      const segmentDuration = 10; // This should match HLS_SEGMENT_DURATION
+      // Get segment duration from config
+      const segmentDuration = config.HLS_SEGMENT_DURATION;
 
       // Generate MPD XML
       const manifest = this.generateMPD(chapterId, bitrateInfos, segmentDuration);
