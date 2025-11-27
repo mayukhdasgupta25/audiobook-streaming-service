@@ -267,6 +267,7 @@ export class TranscodingService {
          // Use unique temporary filename for init file to prevent overwrites when multiple bitrates run in parallel
          const tempInitFilename = `init_${bitrate}k_temp.mp4`;
          const rootTempInitPath = path.join(process.cwd(), tempInitFilename);
+         const bitrateTempInitPath = path.join(bitrateDir, tempInitFilename);
          const targetInitPath = path.join(bitrateDir, 'init.mp4');
 
          const command = ffmpeg(inputPath)
@@ -305,8 +306,8 @@ export class TranscodingService {
                try {
                   console.log(`Transcoding completed for bitrate ${bitrate}`);
 
-                  // Move unique temporary init file from root to bitrate directory
-                  await this.moveTempInitFileToBitrateDir(rootTempInitPath, targetInitPath, bitrate);
+                  // Move unique temporary init file from bitrate directory or root to final location
+                  await this.moveTempInitFileToBitrateDir(bitrateTempInitPath, rootTempInitPath, targetInitPath, bitrate);
 
                   // Also check for generic init.mp4 (backward compatibility)
                   await this.moveInitFileToBitrateDir(bitrateDir);
@@ -497,40 +498,56 @@ export class TranscodingService {
    }
 
    /**
-    * Move unique temporary init file from root to bitrate directory
+    * Move unique temporary init file from bitrate directory or root to final location
     * This prevents overwrites when multiple bitrates are transcoded in parallel
+    * FFmpeg creates the init file in the same directory as the playlist (bitrate directory)
     */
    private async moveTempInitFileToBitrateDir(
-      tempInitPath: string,
+      bitrateTempInitPath: string,
+      rootTempInitPath: string,
       targetInitPath: string,
       bitrate: number
    ): Promise<void> {
       try {
-         // Check if unique temp init file exists in root directory
+         // Ensure target directory exists
+         const bitrateDir = path.dirname(targetInitPath);
+         await fs.mkdir(bitrateDir, { recursive: true });
+
+         // First, check if temp init file exists in bitrate directory (where FFmpeg actually creates it)
          try {
-            await fs.access(tempInitPath);
-
-            // Ensure target directory exists
-            const bitrateDir = path.dirname(targetInitPath);
-            await fs.mkdir(bitrateDir, { recursive: true });
-
-            // Move temp init file to bitrate directory and rename to init.mp4
-            await fs.rename(tempInitPath, targetInitPath);
-            console.log(`Moved init_${bitrate}k_temp.mp4 from root to ${bitrateDir}/init.mp4`);
+            await fs.access(bitrateTempInitPath);
+            // Rename temp file to init.mp4 in the bitrate directory
+            await fs.rename(bitrateTempInitPath, targetInitPath);
+            console.log(`Renamed init_${bitrate}k_temp.mp4 to init.mp4 in ${bitrateDir}`);
+            return;
          } catch (error: any) {
-            // Temp init file doesn't exist in root
+            // Temp init file doesn't exist in bitrate directory
             if (error.code !== 'ENOENT') {
                throw error;
             }
+         }
 
-            // Check if init.mp4 already exists in the correct location
-            try {
-               await fs.access(targetInitPath);
-               console.log(`init.mp4 already exists in ${path.dirname(targetInitPath)}`);
-            } catch {
-               // init.mp4 doesn't exist, which might be an issue
-               console.warn(`init.mp4 not found for bitrate ${bitrate}k in ${path.dirname(targetInitPath)}`);
+         // Fallback: Check if temp init file exists in root directory (for backward compatibility)
+         try {
+            await fs.access(rootTempInitPath);
+            // Move temp init file from root to bitrate directory and rename to init.mp4
+            await fs.rename(rootTempInitPath, targetInitPath);
+            console.log(`Moved init_${bitrate}k_temp.mp4 from root to ${bitrateDir}/init.mp4`);
+            return;
+         } catch (error: any) {
+            // Temp init file doesn't exist in root either
+            if (error.code !== 'ENOENT') {
+               throw error;
             }
+         }
+
+         // Check if init.mp4 already exists in the correct location
+         try {
+            await fs.access(targetInitPath);
+            console.log(`init.mp4 already exists in ${bitrateDir}`);
+         } catch {
+            // init.mp4 doesn't exist, which might be an issue
+            console.warn(`init.mp4 not found for bitrate ${bitrate}k in ${bitrateDir}`);
          }
       } catch (error: any) {
          console.error(`Error moving temp init file for bitrate ${bitrate}k:`, error);
