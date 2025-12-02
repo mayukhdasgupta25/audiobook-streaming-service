@@ -20,12 +20,6 @@ export const createStreamingRoutes = (prisma: PrismaClient) => {
    // HLS Segment endpoint
    router.get('/chapters/:chapterId/:bitrate/segments/:segmentId', streamingController.getSegment);
 
-   // DASH Manifest endpoint
-   router.get('/chapters/:chapterId/manifest.mpd', streamingController.getDASHManifest);
-
-   // DASH Segment endpoint
-   router.get('/chapters/:chapterId/:bitrate/dash-segments/:segmentId', streamingController.getDASHSegment);
-
    // Status endpoint
    router.get('/chapters/:chapterId/status', streamingController.getStreamingStatus);
 
