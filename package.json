@@ -18,7 +18,8 @@
     "db:reset": "node scripts/prisma-env.js migrate reset",
     "db:seed": "ts-node prisma/seed.ts",
     "db:delete-seed": "ts-node prisma/delete-seed.ts",
-    "db:studio": "node scripts/prisma-env.js studio"
+    "db:studio": "node scripts/prisma-env.js studio",
+    "rewrite-playlist-urls": "ts-node scripts/rewrite-bit-transcode-urls.ts"
   },
   "keywords": [
     "typescript",

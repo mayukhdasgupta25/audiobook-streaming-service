@@ -77,7 +77,7 @@ export const config = {
    HLS_SEGMENT_DURATION: parseInt(process.env['HLS_SEGMENT_DURATION'] || '4', 10), // seconds
    TRANSCODING_BITRATES: process.env['TRANSCODING_BITRATES']?.split(',').map(b => parseInt(b, 10)) || [64, 128, 256], // kbps
    STREAMING_CACHE_TTL: parseInt(process.env['STREAMING_CACHE_TTL'] || '3600', 10), // seconds
-   STREAMING_BASE_URL: process.env['STREAMING_BASE_URL'] || `http://192.168.0.110:${parseInt(process.env.STREAMING_PORT || '8083', 10)}`,
+   STREAMING_BASE_URL: process.env['STREAMING_BASE_URL'] || `http://192.168.1.6:${parseInt(process.env.STREAMING_PORT || '8083', 10)}`,
 
    // Rate limiting
    RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10), // 15 minutes
