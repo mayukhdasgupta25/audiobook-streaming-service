@@ -362,11 +362,16 @@ export class HLSStreamingService {
          preferredBitrate
       );
 
+      // When client requests a specific bitrate, master playlist lists only that variant
+      const playlistVariants = preferredBitrate !== undefined
+         ? bitrateInfos.filter((bi) => bi.bitrate === recommendedBitrate)
+         : bitrateInfos;
+
       // Generate master playlist content (CMAF-compliant HLS)
       const baseUrl = config.STREAMING_BASE_URL;
       let masterPlaylist = '#EXTM3U\n#EXT-X-VERSION:7\n\n';
 
-      for (const bitrateInfo of bitrateInfos) {
+      for (const bitrateInfo of playlistVariants) {
          masterPlaylist += `#EXT-X-STREAM-INF:BANDWIDTH=${bitrateInfo.bandwidth},CODECS="mp4a.40.2"`;
 
          if (bitrateInfo.bitrate === recommendedBitrate) {

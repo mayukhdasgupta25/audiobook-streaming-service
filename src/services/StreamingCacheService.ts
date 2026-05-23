@@ -289,7 +289,6 @@ export class StreamingCacheService {
                // Try to load .m4s segment first
                let segmentContent: Buffer | null = null;
                let segmentId: string = segmentIdM4s;
-               let storagePath: string = storagePathM4s;
 
                try {
                   segmentContent = await this.storageProvider.downloadFile(storagePathM4s);
@@ -298,7 +297,6 @@ export class StreamingCacheService {
                   try {
                      segmentContent = await this.storageProvider.downloadFile(storagePathTs);
                      segmentId = segmentIdTs;
-                     storagePath = storagePathTs;
                   } catch {
                      // Skip if neither exists
                      continue;
