@@ -212,12 +212,15 @@ export class StreamingCacheService {
     * Cache HLS segment
     */
    async cacheSegment(
+      chapterId: string,
+      bitrate: number,
       segmentId: string,
       segmentContent: Buffer
    ): Promise<boolean> {
       try {
-         const key = `stream:segment:${segmentId}`;
-         const contentType = 'video/mp2t';
+         const key = `stream:segment:${chapterId}:${bitrate}:${segmentId}`;
+         // Determine content type based on segment extension
+         const contentType = segmentId.endsWith('.m4s') || segmentId.endsWith('.mp4') ? 'video/mp4' : 'video/mp2t';
 
          return await this.set(key, segmentContent, config.STREAMING_CACHE_TTL, contentType);
       } catch (error: any) {
@@ -229,9 +232,13 @@ export class StreamingCacheService {
    /**
     * Get cached HLS segment
     */
-   async getCachedSegment(segmentId: string): Promise<Buffer | null> {
+   async getCachedSegment(
+      chapterId: string,
+      bitrate: number,
+      segmentId: string
+   ): Promise<Buffer | null> {
       try {
-         const key = `stream:segment:${segmentId}`;
+         const key = `stream:segment:${chapterId}:${bitrate}:${segmentId}`;
          return await this.get(key);
       } catch (error: any) {
          console.error('Get cached segment error:', error);
@@ -243,12 +250,15 @@ export class StreamingCacheService {
     * Get segment with fallback to storage
     */
    async getSegmentWithFallback(
+      chapterId: string,
+      bitrate: number,
       segmentId: string,
       storagePath: string
    ): Promise<Buffer | null> {
       try {
-         const key = `stream:segment:${segmentId}`;
-         const contentType = 'video/mp2t';
+         const key = `stream:segment:${chapterId}:${bitrate}:${segmentId}`;
+         // Determine content type based on segment extension
+         const contentType = segmentId.endsWith('.m4s') || segmentId.endsWith('.mp4') ? 'video/mp4' : 'video/mp2t';
 
          return await this.getWithFallback(key, storagePath, contentType);
       } catch (error: any) {
@@ -269,15 +279,36 @@ export class StreamingCacheService {
 
       try {
          for (let i = 0; i < segmentCount; i++) {
-            const segmentId = `${chapterId}_${bitrate}_${i.toString().padStart(3, '0')}`;
-            const storagePath = `bit_transcode/${chapterId}/${bitrate}k/segment_${i.toString().padStart(3, '0')}.ts`;
+            // Try .m4s first (fMP4), fallback to .ts (legacy)
+            const segmentIdM4s = `segment_${i.toString().padStart(3, '0')}.m4s`;
+            const segmentIdTs = `segment_${i.toString().padStart(3, '0')}.ts`;
+            const storagePathM4s = `bit_transcode/${chapterId}/${bitrate}k/${segmentIdM4s}`;
+            const storagePathTs = `bit_transcode/${chapterId}/${bitrate}k/${segmentIdTs}`;
 
             try {
-               const segmentContent = await this.storageProvider.downloadFile(storagePath);
-               await this.cacheSegment(segmentId, segmentContent);
-               loadedCount++;
+               // Try to load .m4s segment first
+               let segmentContent: Buffer | null = null;
+               let segmentId: string = segmentIdM4s;
+
+               try {
+                  segmentContent = await this.storageProvider.downloadFile(storagePathM4s);
+               } catch {
+                  // Fallback to .ts if .m4s doesn't exist
+                  try {
+                     segmentContent = await this.storageProvider.downloadFile(storagePathTs);
+                     segmentId = segmentIdTs;
+                  } catch {
+                     // Skip if neither exists
+                     continue;
+                  }
+               }
+
+               if (segmentContent) {
+                  await this.cacheSegment(chapterId, bitrate, segmentId, segmentContent);
+                  loadedCount++;
+               }
             } catch (error: any) {
-               console.error(`Failed to preload segment ${segmentId}:`, error);
+               console.error(`Failed to preload segment ${segmentIdM4s} or ${segmentIdTs}:`, error);
             }
          }
       } catch (error: any) {

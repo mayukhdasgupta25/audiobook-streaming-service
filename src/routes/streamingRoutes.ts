@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { StreamingController } from '../controllers/StreamingController';
-import { AuthMiddleware } from '../middleware/AuthMiddleware';
+import { authenticateJWT } from '../middleware/authenticateJWT';
 
 /**
  * Streaming routes factory
@@ -10,17 +10,14 @@ export const createStreamingRoutes = (prisma: PrismaClient) => {
    const router = require('express').Router();
    const streamingController = new StreamingController(prisma);
 
-   // Apply external service authentication middleware to all streaming routes
-   // This ensures all /api/v1/stream/* endpoints require user_id header
-   router.use(AuthMiddleware.validateExternalService);
-
-   // Master playlist endpoint
+   router.use(authenticateJWT);
+   // HLS Master playlist endpoint
    router.get('/chapters/:chapterId/master.m3u8', streamingController.getMasterPlaylist);
 
-   // Variant playlist endpoint
+   // HLS Variant playlist endpoint
    router.get('/chapters/:chapterId/:bitrate/playlist.m3u8', streamingController.getVariantPlaylist);
 
-   // Segment endpoint
+   // HLS Segment endpoint
    router.get('/chapters/:chapterId/:bitrate/segments/:segmentId', streamingController.getSegment);
 
    // Status endpoint
