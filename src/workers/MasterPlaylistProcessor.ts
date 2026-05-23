@@ -123,7 +123,7 @@ export class MasterPlaylistProcessor {
    /**
     * Generate master playlist for specific bitrates
     */
-   private async generateMasterPlaylistForBitrates(chapterId: string, bitrates: number[]): Promise<string> {
+   private async generateMasterPlaylistForBitrates(chapterId: string, _bitrates: number[]): Promise<string> {
       try {
          // Get ALL completed transcoded chapters for this chapter (not just the ones passed in)
          // This ensures we include any bitrates that completed after the initial check
