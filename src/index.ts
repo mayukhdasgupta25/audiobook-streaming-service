@@ -12,10 +12,13 @@ import { config } from './config/env';
 import { ErrorHandler } from './middleware/ErrorHandler';
 import { RabbitMQFactory } from './config/rabbitmq';
 import { TranscodingWorkerFactory } from './workers/TranscodingWorker';
+import { ChapterDeletionWorkerFactory } from './workers/ChapterDeletionWorker';
 import { BullWorkerLauncher } from './workers/BullWorkerLauncher';
 import { BullBoardManager } from './config/bullBoard';
 import { createStreamingRoutes } from './routes/streamingRoutes';
 import { PrismaClient } from '@prisma/client';
+import { adapter } from './config/prisma.config';
+import path from 'path';
 
 const app = express();
 
@@ -42,6 +45,14 @@ app.use(session({
    }
 }));
 
+// Serve transcoded segments statically (before authentication middleware)
+// Physical dir: storage/bit_transcode
+// Public URL prefix: /bit_transcode
+app.use(
+   '/bit_transcode',
+   express.static(path.join(process.cwd(), 'storage', 'bit_transcode'))
+);
+
 // Session validation middleware (exclude Bull Board and streaming routes)
 app.use((req, res, next) => {
    // Skip session validation for Bull Board routes
@@ -57,8 +68,8 @@ app.use((req, res, next) => {
    next();
 });
 
-// Initialize Prisma client
-const prisma = new PrismaClient();
+// Initialize Prisma client with adapter
+const prisma = new PrismaClient({ adapter });
 
 // Initialize RabbitMQ, storage provider, and transcoding worker
 (async (): Promise<void> => {
@@ -73,6 +84,9 @@ const prisma = new PrismaClient();
 
       // Start transcoding worker
       await TranscodingWorkerFactory.startWorker(prisma);
+
+      // Start chapter deletion worker
+      await ChapterDeletionWorkerFactory.startWorker(prisma);
 
       // Start Bull workers
       const bullWorkerLauncher = BullWorkerLauncher.getInstance(prisma);
@@ -224,6 +238,10 @@ const gracefulShutdown = async (signal: string) => {
       // Stop transcoding worker
       await TranscodingWorkerFactory.stopWorker();
       console.log('Transcoding worker stopped');
+
+      // Stop chapter deletion worker
+      await ChapterDeletionWorkerFactory.stopWorker();
+      console.log('Chapter deletion worker stopped');
 
       // Stop Bull workers
       const bullWorkerLauncher = BullWorkerLauncher.getInstance(prisma);

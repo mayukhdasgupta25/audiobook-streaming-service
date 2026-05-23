@@ -38,13 +38,13 @@ export class MasterPlaylistProcessor {
          // Update job progress
          await job.progress(30);
 
-         // Generate master playlist for completed bitrates
+         // Generate HLS master playlist for completed bitrates
          const masterPlaylist = await this.generateMasterPlaylistForBitrates(chapterId, completedBitrates);
 
          // Update job progress
          await job.progress(70);
 
-         // Upload master playlist to storage
+         // Upload HLS master playlist to storage
          await this.uploadMasterPlaylist(chapterId, masterPlaylist);
 
          // Update job progress
@@ -70,7 +70,7 @@ export class MasterPlaylistProcessor {
       const checkInterval = 5000; // 5 seconds
       const startTime = Date.now();
 
-      console.log(`Waiting for bitrate jobs to complete for chapter ${chapterId}`);
+      console.log(`Waiting for bitrate jobs to complete for chapter ${chapterId}, expected: ${expectedBitrates.join(', ')}`);
 
       while (Date.now() - startTime < maxWaitTime) {
          // Check which bitrates have completed successfully
@@ -85,16 +85,38 @@ export class MasterPlaylistProcessor {
 
          const completedBitrates = completedTranscoded.map(tc => tc.bitrate);
 
-         if (completedBitrates.length > 0) {
-            console.log(`Found ${completedBitrates.length} completed bitrates for chapter ${chapterId}: ${completedBitrates.join(', ')}`);
+         // Wait for ALL expected bitrates to complete, or return what we have after timeout
+         if (completedBitrates.length === expectedBitrates.length) {
+            console.log(`All ${completedBitrates.length} expected bitrates completed for chapter ${chapterId}: ${completedBitrates.join(', ')}`);
             return completedBitrates;
+         }
+
+         if (completedBitrates.length > 0) {
+            console.log(`Found ${completedBitrates.length}/${expectedBitrates.length} completed bitrates for chapter ${chapterId}: ${completedBitrates.join(', ')}. Waiting for more...`);
          }
 
          // Wait before checking again
          await new Promise(resolve => setTimeout(resolve, checkInterval));
       }
 
-      console.warn(`Timeout waiting for bitrate jobs for chapter ${chapterId}`);
+      // After timeout, return whatever bitrates have completed
+      const finalCompleted = await this.prisma.transcodedChapter.findMany({
+         where: {
+            chapterId,
+            bitrate: { in: expectedBitrates },
+            status: 'completed'
+         },
+         select: { bitrate: true }
+      });
+
+      const finalBitrates = finalCompleted.map(tc => tc.bitrate);
+
+      if (finalBitrates.length > 0) {
+         console.warn(`Timeout waiting for all bitrate jobs for chapter ${chapterId}. Returning ${finalBitrates.length} completed bitrates: ${finalBitrates.join(', ')}`);
+         return finalBitrates;
+      }
+
+      console.warn(`Timeout waiting for bitrate jobs for chapter ${chapterId}, no bitrates completed`);
       return [];
    }
 
@@ -103,18 +125,23 @@ export class MasterPlaylistProcessor {
     */
    private async generateMasterPlaylistForBitrates(chapterId: string, bitrates: number[]): Promise<string> {
       try {
-         // Get transcoded chapter info for each bitrate
+         // Get ALL completed transcoded chapters for this chapter (not just the ones passed in)
+         // This ensures we include any bitrates that completed after the initial check
          const transcodedChapters = await this.prisma.transcodedChapter.findMany({
             where: {
                chapterId,
-               bitrate: { in: bitrates },
                status: 'completed'
+            },
+            orderBy: {
+               bitrate: 'asc'
             }
          });
 
          if (transcodedChapters.length === 0) {
             throw new Error('No completed transcoded chapters found');
          }
+
+         console.log(`Generating master playlist for chapter ${chapterId} with ${transcodedChapters.length} completed bitrates: ${transcodedChapters.map(tc => tc.bitrate).join(', ')}`);
 
          // Create variant playlists data structure
          const variantPlaylists = transcodedChapters.map(tc => ({
@@ -124,7 +151,7 @@ export class MasterPlaylistProcessor {
          }));
 
          // Generate master playlist using TranscodingService
-         const masterPlaylist = this.transcodingService.generateMasterPlaylist(variantPlaylists, '');
+         const masterPlaylist = this.transcodingService.generateMasterPlaylist(variantPlaylists, chapterId);
 
          return masterPlaylist;
       } catch (error: any) {

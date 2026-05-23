@@ -12,15 +12,35 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
  * Environment configuration for the streaming service
  * Provides type-safe access to environment variables with defaults
  */
+// Construct DATABASE_URL if not provided directly
+const getDatabaseUrl = (): string => {
+   if (process.env.DATABASE_URL) {
+      return process.env.DATABASE_URL;
+   }
+   // Construct from individual DB variables
+   const host = process.env['DB_HOST'] || 'localhost';
+   const port = process.env['DB_PORT'] || '5432';
+   const name = process.env['DB_NAME'] || 'streaming_dev';
+   const user = process.env['DB_USER'] || 'postgres';
+   const password = process.env['DB_PASSWORD'] || '';
+   return `postgresql://${user}:${password}@${host}:${port}/${name}`;
+};
+
+// Set DATABASE_URL for Prisma Migrate and other tools
+if (!process.env.DATABASE_URL) {
+   process.env.DATABASE_URL = getDatabaseUrl();
+}
+
 export const config = {
    // Server configuration
    NODE_ENV: nodeEnv,
-   STREAMING_PORT: parseInt(process.env.STREAMING_PORT || '8082', 10),
+   STREAMING_PORT: parseInt(process.env.STREAMING_PORT || '8083', 10),
    DB_HOST: process.env['DB_HOST'] || 'localhost',
    DB_PORT: parseInt(process.env['DB_PORT'] || '5432', 10),
    DB_NAME: process.env['DB_NAME'] || 'streaming_dev',
    DB_USER: process.env['DB_USER'] || 'postgres',
    DB_PASSWORD: process.env['DB_PASSWORD'] || '',
+   DATABASE_URL: process.env.DATABASE_URL,
 
    // Client configuration
    CLIENT_URL: process.env.CLIENT_URL || 'http://localhost:8081',
@@ -54,9 +74,10 @@ export const config = {
    FFPROBE_PATH: process.env.FFPROBE_PATH || 'ffprobe',
 
    // Streaming configuration
-   HLS_SEGMENT_DURATION: parseInt(process.env['HLS_SEGMENT_DURATION'] || '10', 10), // seconds
+   HLS_SEGMENT_DURATION: parseInt(process.env['HLS_SEGMENT_DURATION'] || '4', 10), // seconds
    TRANSCODING_BITRATES: process.env['TRANSCODING_BITRATES']?.split(',').map(b => parseInt(b, 10)) || [64, 128, 256], // kbps
    STREAMING_CACHE_TTL: parseInt(process.env['STREAMING_CACHE_TTL'] || '3600', 10), // seconds
+   STREAMING_BASE_URL: process.env['STREAMING_BASE_URL'] || `http://192.168.1.6:${parseInt(process.env.STREAMING_PORT || '8083', 10)}`,
 
    // Rate limiting
    RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10), // 15 minutes
@@ -86,4 +107,7 @@ export const config = {
    // Analytics configuration
    ANALYTICS_ENABLED: process.env.ANALYTICS_ENABLED === 'true',
    ANALYTICS_RETENTION_DAYS: parseInt(process.env.ANALYTICS_RETENTION_DAYS || '30', 10),
+
+   JWKS_ENDPOINT: process.env['JWKS_ENDPOINT'] || 'http://localhost:8080/auth/.well-known/jwks.json',
+   AUTH_SERVICE_URL: process.env['AUTH_SERVICE_URL'] || 'http://localhost:8080'
 };

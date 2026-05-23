@@ -3,4 +3,4 @@
 #EXT-X-TARGETDURATION:10
 #EXT-X-MEDIA-SEQUENCE:0
 #EXTINF:10.007800,
-segment_000.ts
+http://192.168.1.6:8083/bit_transcode/cmgyqvt00006p33mk79oxt0wn/64k/segment_000.ts
