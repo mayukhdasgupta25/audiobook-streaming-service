@@ -6,7 +6,7 @@ import { PrismaClient } from '@prisma/client';
 import { StreamingCacheService, StreamingCacheFactory } from './StreamingCacheService';
 import { StorageProvider } from './storage/StorageProvider';
 import { StorageFactory } from './storage/StorageFactory';
-// import { config } from '../config/env';
+import { config } from '../config/env';
 
 export interface StreamingOptions {
    chapterId: string;
@@ -185,19 +185,22 @@ export class HLSStreamingService {
          const segmentPath = `${transcodedChapter.segmentsPath}/${segmentId}`;
 
          // Try to get from cache first
-         let segmentContent = await this.cacheService.getCachedSegment(segmentId);
+         let segmentContent = await this.cacheService.getCachedSegment(chapterId, bitrate, segmentId);
 
          if (!segmentContent) {
             // Get from storage with fallback
-            segmentContent = await this.cacheService.getSegmentWithFallback(segmentId, segmentPath);
+            segmentContent = await this.cacheService.getSegmentWithFallback(chapterId, bitrate, segmentId, segmentPath);
 
             if (!segmentContent) {
                return this.createErrorResponse('Segment not found', 404);
             }
          }
 
+         // Determine content type based on segment extension
+         const contentType = segmentId.endsWith('.m4s') ? 'video/mp4' : 'video/mp2t';
+
          return {
-            contentType: 'video/mp2t',
+            contentType,
             content: segmentContent,
             headers: {
                'Cache-Control': 'public, max-age=3600', // 1 hour
@@ -345,7 +348,7 @@ export class HLSStreamingService {
             bitrateInfos.push({
                bitrate,
                bandwidth: bitrate * 1000, // Convert kbps to bps
-               playlistUrl: `bit_transcode/${chapterId}/${bitrate}k/playlist.m3u8`,
+               playlistUrl: `bit_transcode/${chapterId}/${bitrate}k/playlist.m3u8`, // Keep for reference, but we'll use absolute URL in generation
                segmentsPath: transcodedChapter.segmentsPath,
                available: true
             });
@@ -359,17 +362,25 @@ export class HLSStreamingService {
          preferredBitrate
       );
 
-      // Generate master playlist content
-      let masterPlaylist = '#EXTM3U\n#EXT-X-VERSION:3\n\n';
+      // When client requests a specific bitrate, master playlist lists only that variant
+      const playlistVariants = preferredBitrate !== undefined
+         ? bitrateInfos.filter((bi) => bi.bitrate === recommendedBitrate)
+         : bitrateInfos;
 
-      for (const bitrateInfo of bitrateInfos) {
+      // Generate master playlist content (CMAF-compliant HLS)
+      const baseUrl = config.STREAMING_BASE_URL;
+      let masterPlaylist = '#EXTM3U\n#EXT-X-VERSION:7\n\n';
+
+      for (const bitrateInfo of playlistVariants) {
          masterPlaylist += `#EXT-X-STREAM-INF:BANDWIDTH=${bitrateInfo.bandwidth},CODECS="mp4a.40.2"`;
 
          if (bitrateInfo.bitrate === recommendedBitrate) {
             masterPlaylist += ',RESOLUTION=0x0';
          }
 
-         masterPlaylist += `\n${bitrateInfo.playlistUrl}\n\n`;
+         // Use complete absolute URL for playlist
+         const playlistUrl = `${baseUrl}/bit_transcode/${chapterId}/${bitrateInfo.bitrate}k/playlist.m3u8`;
+         masterPlaylist += `\n${playlistUrl}\n\n`;
       }
 
       return {
@@ -384,20 +395,51 @@ export class HLSStreamingService {
     * Generate variant playlist from segments
     */
    private async generateVariantPlaylist(
-      _chapterId: string,
-      _bitrate: number,
+      chapterId: string,
+      bitrate: number,
       transcodedChapter: any
    ): Promise<string> {
       try {
          // List segments in storage
          const segments = await this.storageProvider.listFiles(transcodedChapter.segmentsPath);
-         const segmentFiles = segments.filter(seg => seg.endsWith('.ts')).sort();
+         const segmentFiles = segments.filter(seg => seg.endsWith('.m4s') || seg.endsWith('.ts')).sort();
 
-         let playlist = '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n\n';
+         // Extract chapterId and bitrate from segmentsPath if not provided
+         // segmentsPath is like: bit_transcode/{chapterId}/{bitrate}k/
+         let extractedChapterId = chapterId;
+         let extractedBitrate = bitrate;
+
+         if (transcodedChapter.segmentsPath) {
+            const pathMatch = transcodedChapter.segmentsPath.match(/bit_transcode\/([^/]+)\/(\d+)k/);
+            if (pathMatch) {
+               extractedChapterId = pathMatch[1];
+               extractedBitrate = parseInt(pathMatch[2], 10);
+            }
+         }
+
+         // Construct base URL for segments
+         const baseUrl = config.STREAMING_BASE_URL;
+         const segmentsBasePath = `bit_transcode/${extractedChapterId}/${extractedBitrate}k`;
+
+         // Find init.mp4 file in the segments path
+         const initFiles = segments.filter(seg => seg.includes('init.mp4') || seg.endsWith('/init.mp4'));
+         let initUri = `${baseUrl}/${segmentsBasePath}/init.mp4`; // Default absolute URL
+
+         if (initFiles.length > 0) {
+            // Use absolute URL for init file
+            initUri = `${baseUrl}/${segmentsBasePath}/init.mp4`;
+         }
+
+         // EXT-X-TARGETDURATION should be at least as large as the longest segment duration
+         // Using 5 seconds to accommodate 4-second segments with some buffer
+         let playlist = `#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:5\n#EXT-X-MAP:URI="${initUri}"\n\n`;
 
          for (const segmentFile of segmentFiles) {
             const segmentName = segmentFile.split('/').pop();
-            playlist += `#EXTINF:10.0,\n${segmentName}\n`;
+            // Construct absolute URL for segment
+            const segmentUrl = `${baseUrl}/${segmentsBasePath}/${segmentName}`;
+            // Use config value for segment duration to match actual transcoded segments
+            playlist += `#EXTINF:${config.HLS_SEGMENT_DURATION}.0,\n${segmentUrl}\n`;
          }
 
          playlist += '#EXT-X-ENDLIST\n';
@@ -485,7 +527,7 @@ export class HLSStreamingService {
 
          // Preload segments into cache
          const segments = await this.storageProvider.listFiles(transcodedChapter.segmentsPath);
-         const segmentFiles = segments.filter(seg => seg.endsWith('.ts'));
+         const segmentFiles = segments.filter(seg => seg.endsWith('.m4s') || seg.endsWith('.ts'));
 
          await this.cacheService.preloadChapterSegments(chapterId, bitrate, segmentFiles.length);
 

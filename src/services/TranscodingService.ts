@@ -160,7 +160,7 @@ export class TranscodingService {
          }
 
          // Generate master playlist
-         const masterPlaylist = this.generateMasterPlaylist(variantPlaylists, outputDir);
+         const masterPlaylist = this.generateMasterPlaylist(variantPlaylists, id);
 
          // Upload master playlist to bit_transcode/{chapter_id} directory
          const masterPlaylistPath = `bit_transcode/${id}/master.m3u8`;
@@ -253,7 +253,7 @@ export class TranscodingService {
       return new Promise((resolve, reject) => {
          const bitrateDir = path.join(process.cwd(), 'storage', outputDir, `${bitrate}k`);
          const playlistPath = path.join(bitrateDir, 'playlist.m3u8');
-         const segmentPattern = path.join(bitrateDir, 'segment_%03d.ts');
+         const segmentPattern = path.join(bitrateDir, 'segment_%03d.m4s');
 
          // Ensure bitrate directory exists
          this.ensureOutputDirectory(path.join(outputDir, `${bitrate}k`));
@@ -261,17 +261,31 @@ export class TranscodingService {
          // Update job status to processing
          this.updateTranscodingJob(id, bitrate, 'processing', 0);
 
+         // Determine audio channels: mono (1) for 64k, stereo (2) for others
+         const audioChannels = bitrate === 64 ? 1 : 2;
+
+         // Use unique temporary filename for init file to prevent overwrites when multiple bitrates run in parallel
+         const tempInitFilename = `init_${bitrate}k_temp.mp4`;
+         const rootTempInitPath = path.join(process.cwd(), tempInitFilename);
+         const bitrateTempInitPath = path.join(bitrateDir, tempInitFilename);
+         const targetInitPath = path.join(bitrateDir, 'init.mp4');
+
          const command = ffmpeg(inputPath)
             .audioCodec('aac')
             .audioBitrate(bitrate)
-            .audioChannels(2)
-            .audioFrequency(44100)
+            .audioChannels(audioChannels)
+            .audioFrequency(48000)
+            .audioFilters('lowpass=f=20000')
             .format('hls')
             .outputOptions([
+               `-profile:a aac_low`,
                `-hls_time ${segmentDuration}`,
                `-hls_list_size 0`,
+               `-hls_segment_type fmp4`,
                `-hls_segment_filename ${segmentPattern}`,
-               '-hls_flags independent_segments'
+               `-hls_fmp4_init_filename ${tempInitFilename}`,
+               '-hls_flags independent_segments',
+               '-avoid_negative_ts make_zero'
             ])
             .output(playlistPath);
 
@@ -292,8 +306,54 @@ export class TranscodingService {
                try {
                   console.log(`Transcoding completed for bitrate ${bitrate}`);
 
+                  // Move unique temporary init file from bitrate directory or root to final location
+                  await this.moveTempInitFileToBitrateDir(bitrateTempInitPath, rootTempInitPath, targetInitPath, bitrate);
+
+                  // Also check for generic init.mp4 (backward compatibility)
+                  await this.moveInitFileToBitrateDir(bitrateDir);
+
                   // Read generated playlist
-                  const playlistContent = await fs.readFile(playlistPath, 'utf-8');
+                  let playlistContent = await fs.readFile(playlistPath, 'utf-8');
+
+                  // Replace temporary init filename with init.mp4 in playlist content
+                  playlistContent = playlistContent.replace(
+                     new RegExp(tempInitFilename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
+                     'init.mp4'
+                  );
+
+                  // Convert relative paths to absolute URLs
+                  const baseUrl = config.STREAMING_BASE_URL;
+                  const segmentsBasePath = `bit_transcode/${id}/${bitrate}k`;
+
+                  // Replace init.mp4 in #EXT-X-MAP:URI with absolute URL
+                  playlistContent = playlistContent.replace(
+                     /#EXT-X-MAP:URI="([^"]+)"/g,
+                     (match, uri) => {
+                        // If URI is already absolute, keep it; otherwise make it absolute
+                        if (uri.startsWith('http://') || uri.startsWith('https://')) {
+                           return match;
+                        }
+                        const absoluteUri = uri === 'init.mp4'
+                           ? `${baseUrl}/${segmentsBasePath}/init.mp4`
+                           : `${baseUrl}/${segmentsBasePath}/${uri}`;
+                        return `#EXT-X-MAP:URI="${absoluteUri}"`;
+                     }
+                  );
+
+                  // Replace relative segment paths with absolute URLs
+                  // Match lines that are segment filenames (not starting with #)
+                  playlistContent = playlistContent.split('\n').map(line => {
+                     const trimmedLine = line.trim();
+                     // Skip if line is empty, starts with #, or is already an absolute URL
+                     if (!trimmedLine || trimmedLine.startsWith('#') || trimmedLine.startsWith('http://') || trimmedLine.startsWith('https://')) {
+                        return line;
+                     }
+                     // This is a segment filename, convert to absolute URL
+                     return `${baseUrl}/${segmentsBasePath}/${trimmedLine}`;
+                  }).join('\n');
+
+                  // Write updated playlist content back to file
+                  await fs.writeFile(playlistPath, playlistContent, 'utf-8');
 
                   // Upload playlist and segments to storage
                   await this.uploadTranscodedFiles(bitrateDir, bitrate, playlistContent);
@@ -341,6 +401,7 @@ export class TranscodingService {
 
          // For local storage, files are already in the correct location
          // Just ensure the playlist content is written correctly
+         // Note: init.mp4 is already moved to bitrate directory in the on('end') handler
          if (config.STORAGE_PROVIDER === 'local') {
             const playlistPath = path.join(bitrateDir, 'playlist.m3u8');
             await fs.writeFile(playlistPath, playlistContent, 'utf-8');
@@ -357,12 +418,26 @@ export class TranscodingService {
             'application/vnd.apple.mpegurl'
          );
 
-         // Upload segments
+         // Upload segments and init file
          const segmentFiles = await fs.readdir(bitrateDir);
-         const segmentPattern = /segment_\d+\.ts$/;
+         const segmentPattern = /segment_\d+\.m4s$/;
+         const initPattern = /init\.mp4$/;
 
          for (const file of segmentFiles) {
-            if (segmentPattern.test(file)) {
+            // Upload init segment
+            if (initPattern.test(file)) {
+               const initPath = path.join(bitrateDir, file);
+               const relativeInitPath = path.relative(path.join(process.cwd(), 'storage'), initPath);
+               const initContent = await fs.readFile(initPath);
+
+               await this.storageProvider!.uploadFile(
+                  relativeInitPath,
+                  initContent,
+                  'video/mp4'
+               );
+            }
+            // Upload media segments
+            else if (segmentPattern.test(file)) {
                const segmentPath = path.join(bitrateDir, file);
                const relativeSegmentPath = path.relative(path.join(process.cwd(), 'storage'), segmentPath);
                const segmentContent = await fs.readFile(segmentPath);
@@ -370,7 +445,7 @@ export class TranscodingService {
                await this.storageProvider!.uploadFile(
                   relativeSegmentPath,
                   segmentContent,
-                  'video/mp2t'
+                  'video/mp4'
                );
             }
          }
@@ -389,13 +464,15 @@ export class TranscodingService {
     */
    public generateMasterPlaylist(
       variantPlaylists: Array<{ bitrate: number; playlist: string; segments: string[] }>,
-      _outputDir: string
+      chapterId: string
    ): string {
-      let masterPlaylist = '#EXTM3U\n#EXT-X-VERSION:3\n\n';
+      const baseUrl = config.STREAMING_BASE_URL;
+      let masterPlaylist = '#EXTM3U\n#EXT-X-VERSION:7\n\n';
 
       for (const variant of variantPlaylists) {
          const bandwidth = variant.bitrate * 1000; // Convert kbps to bps
-         const playlistUrl = `${variant.bitrate}k/playlist.m3u8`;
+         // Use complete absolute URL for playlist
+         const playlistUrl = `${baseUrl}/bit_transcode/${chapterId}/${variant.bitrate}k/playlist.m3u8`;
 
          masterPlaylist += `#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},CODECS="mp4a.40.2"\n`;
          masterPlaylist += `${playlistUrl}\n\n`;
@@ -412,12 +489,111 @@ export class TranscodingService {
       const lines = playlistContent.split('\n');
 
       for (const line of lines) {
-         if (line.endsWith('.ts')) {
+         if (line.endsWith('.m4s') || line.endsWith('.ts')) {
             segments.push(line.trim());
          }
       }
 
       return segments;
+   }
+
+   /**
+    * Move unique temporary init file from bitrate directory or root to final location
+    * This prevents overwrites when multiple bitrates are transcoded in parallel
+    * FFmpeg creates the init file in the same directory as the playlist (bitrate directory)
+    */
+   private async moveTempInitFileToBitrateDir(
+      bitrateTempInitPath: string,
+      rootTempInitPath: string,
+      targetInitPath: string,
+      bitrate: number
+   ): Promise<void> {
+      try {
+         // Ensure target directory exists
+         const bitrateDir = path.dirname(targetInitPath);
+         await fs.mkdir(bitrateDir, { recursive: true });
+
+         // First, check if temp init file exists in bitrate directory (where FFmpeg actually creates it)
+         try {
+            await fs.access(bitrateTempInitPath);
+            // Rename temp file to init.mp4 in the bitrate directory
+            await fs.rename(bitrateTempInitPath, targetInitPath);
+            console.log(`Renamed init_${bitrate}k_temp.mp4 to init.mp4 in ${bitrateDir}`);
+            return;
+         } catch (error: any) {
+            // Temp init file doesn't exist in bitrate directory
+            if (error.code !== 'ENOENT') {
+               throw error;
+            }
+         }
+
+         // Fallback: Check if temp init file exists in root directory (for backward compatibility)
+         try {
+            await fs.access(rootTempInitPath);
+            // Move temp init file from root to bitrate directory and rename to init.mp4
+            await fs.rename(rootTempInitPath, targetInitPath);
+            console.log(`Moved init_${bitrate}k_temp.mp4 from root to ${bitrateDir}/init.mp4`);
+            return;
+         } catch (error: any) {
+            // Temp init file doesn't exist in root either
+            if (error.code !== 'ENOENT') {
+               throw error;
+            }
+         }
+
+         // Check if init.mp4 already exists in the correct location
+         try {
+            await fs.access(targetInitPath);
+            console.log(`init.mp4 already exists in ${bitrateDir}`);
+         } catch {
+            // init.mp4 doesn't exist, which might be an issue
+            console.warn(`init.mp4 not found for bitrate ${bitrate}k in ${bitrateDir}`);
+         }
+      } catch (error: any) {
+         console.error(`Error moving temp init file for bitrate ${bitrate}k:`, error);
+         // Don't throw error, as this is a cleanup operation
+      }
+   }
+
+   /**
+    * Move init.mp4 from project root to bitrate directory if it exists in root
+    * FFmpeg sometimes creates init.mp4 in the current working directory instead of the bitrate directory
+    * This is a fallback for backward compatibility
+    */
+   private async moveInitFileToBitrateDir(bitrateDir: string): Promise<void> {
+      try {
+         const rootInitPath = path.join(process.cwd(), 'init.mp4');
+         const targetInitPath = path.join(bitrateDir, 'init.mp4');
+
+         // Check if init.mp4 exists in root directory
+         try {
+            await fs.access(rootInitPath);
+
+            // Check if target directory exists, create if not
+            await fs.mkdir(bitrateDir, { recursive: true });
+
+            // Move init.mp4 from root to bitrate directory
+            await fs.rename(rootInitPath, targetInitPath);
+            console.log(`Moved init.mp4 from root to ${bitrateDir}`);
+         } catch (error: any) {
+            // init.mp4 doesn't exist in root, check if it already exists in bitrate directory
+            if (error.code !== 'ENOENT') {
+               throw error;
+            }
+
+            // Check if init.mp4 already exists in the correct location
+            try {
+               await fs.access(targetInitPath);
+               console.log(`init.mp4 already exists in ${bitrateDir}`);
+            } catch {
+               // init.mp4 doesn't exist in either location, which is fine
+               console.log(`init.mp4 not found in root or bitrate directory for ${bitrateDir}`);
+            }
+         }
+      } catch (error: any) {
+         console.error(`Error moving init.mp4 to bitrate directory:`, error);
+         // Don't throw error, as this is a cleanup operation
+      }
    }
 
    /**
