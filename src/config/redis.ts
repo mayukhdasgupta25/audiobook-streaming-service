@@ -3,6 +3,7 @@
  * Handles Redis connection and configuration for Bull queues
  */
 import Redis from 'ioredis';
+import { config } from './env';
 
 export interface RedisConfig {
    host: string;
@@ -36,17 +37,10 @@ export class RedisConnection {
    /**
     * Get Redis connection instance
     */
-   public static getInstance(config?: RedisConfig): RedisConnection {
+   public static getInstance(redisConfig?: RedisConfig): RedisConnection {
       if (!RedisConnection.instance) {
-         const defaultConfig: RedisConfig = {
-            host: process.env['REDIS_HOST'] || 'localhost',
-            port: parseInt(process.env['REDIS_PORT'] || '6379'),
-            password: process.env['REDIS_PASSWORD'] || undefined,
-            db: parseInt(process.env['REDIS_DB'] || '0'),
-            lazyConnect: process.env['REDIS_LAZY_CONNECT'] === 'true',
-         };
-
-         RedisConnection.instance = new RedisConnection(config || defaultConfig);
+         const parsedConfig = redisConfig ?? RedisConfigHelper.getConfigFromEnv();
+         RedisConnection.instance = new RedisConnection(parsedConfig);
       }
 
       return RedisConnection.instance;
@@ -211,12 +205,16 @@ export class RedisConfigHelper {
     * Get Redis configuration from environment variables
     */
    public static getConfigFromEnv(): RedisConfig {
+      const redisUrl = new URL(config.REDIS_URL);
+      const dbPath = redisUrl.pathname.replace(/^\//, '');
+      const parsedDb = dbPath ? parseInt(dbPath, 10) : 0;
+
       return {
-         host: process.env['REDIS_HOST'] || 'localhost',
-         port: parseInt(process.env['REDIS_PORT'] || '6379'),
-         password: process.env['REDIS_PASSWORD'] || undefined,
-         db: parseInt(process.env['REDIS_DB'] || '0'),
-         lazyConnect: process.env['REDIS_LAZY_CONNECT'] === 'true',
+         host: redisUrl.hostname,
+         port: parseInt(redisUrl.port || '6379', 10),
+         password: config.REDIS_PASSWORD || undefined,
+         db: Number.isNaN(parsedDb) ? 0 : parsedDb,
+         lazyConnect: true,
       };
    }
 

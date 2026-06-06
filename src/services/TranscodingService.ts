@@ -8,6 +8,7 @@ import fs from 'fs/promises';
 import { StorageProvider } from './storage/StorageProvider';
 import { StorageFactory } from './storage/StorageFactory';
 import { config } from '../config/env';
+import { toStorageKey } from '../utils/storageKeys';
 import { PrismaClient } from '@prisma/client';
 
 export interface TranscodingOptions {
@@ -65,7 +66,8 @@ export class TranscodingService {
 
       // In development, ensure file exists in local storage
       if (config.NODE_ENV === 'development') {
-         const fullPath = path.join(process.cwd(), "storage", filePath);
+         const storageKey = toStorageKey(filePath);
+         const fullPath = path.join(process.cwd(), config.LOCAL_STORAGE_PATH, storageKey);
          const dirPath = path.dirname(fullPath);
 
          // Create directory if it doesn't exist
@@ -78,19 +80,19 @@ export class TranscodingService {
          } catch {
             // File doesn't exist locally, try to get it from storage provider
             console.log(`File not found locally, downloading from storage: ${filePath}`);
-            const fileExists = await this.storageProvider!.fileExists(filePath);
+            const fileExists = await this.storageProvider!.fileExists(toStorageKey(filePath));
 
             if (!fileExists) {
                throw new Error(`Input file not found in storage at path: ${filePath}`);
             }
 
-            const fileContent = await this.storageProvider!.downloadFile(filePath);
+            const fileContent = await this.storageProvider!.downloadFile(toStorageKey(filePath));
             await fs.writeFile(fullPath, fileContent);
             console.log(`File downloaded and saved to: ${fullPath}`);
          }
       } else {
          // For production/other environments, verify file exists in storage (S3)
-         const fileExists = await this.storageProvider!.fileExists(filePath);
+         const fileExists = await this.storageProvider!.fileExists(toStorageKey(filePath));
 
          if (!fileExists) {
             throw new Error(`Input file not found in storage at path: ${filePath}`);
@@ -163,7 +165,7 @@ export class TranscodingService {
          const masterPlaylist = this.generateMasterPlaylist(variantPlaylists, id);
 
          // Upload master playlist to bit_transcode/{chapter_id} directory
-         const masterPlaylistPath = `bit_transcode/${id}/master.m3u8`;
+         const masterPlaylistPath = toStorageKey(`bit_transcode/${id}/master.m3u8`);
          await this.storageProvider!.uploadFile(
             masterPlaylistPath,
             Buffer.from(masterPlaylist),
@@ -251,7 +253,7 @@ export class TranscodingService {
       const { inputPath, outputDir, bitrate, segmentDuration, id } = options;
 
       return new Promise((resolve, reject) => {
-         const bitrateDir = path.join(process.cwd(), 'storage', outputDir, `${bitrate}k`);
+         const bitrateDir = path.join(process.cwd(), config.LOCAL_STORAGE_PATH, outputDir, `${bitrate}k`);
          const playlistPath = path.join(bitrateDir, 'playlist.m3u8');
          const segmentPattern = path.join(bitrateDir, 'segment_%03d.m4s');
 
@@ -411,7 +413,9 @@ export class TranscodingService {
 
          // For cloud storage (S3), upload files
          const playlistPath = path.join(bitrateDir, 'playlist.m3u8');
-         const relativePlaylistPath = path.relative(path.join(process.cwd(), 'storage'), playlistPath);
+         const relativePlaylistPath = toStorageKey(
+            path.relative(path.join(process.cwd(), config.LOCAL_STORAGE_PATH), playlistPath).replace(/\\/g, '/')
+         );
          await this.storageProvider!.uploadFile(
             relativePlaylistPath,
             Buffer.from(playlistContent),
@@ -427,7 +431,9 @@ export class TranscodingService {
             // Upload init segment
             if (initPattern.test(file)) {
                const initPath = path.join(bitrateDir, file);
-               const relativeInitPath = path.relative(path.join(process.cwd(), 'storage'), initPath);
+               const relativeInitPath = toStorageKey(
+                  path.relative(path.join(process.cwd(), config.LOCAL_STORAGE_PATH), initPath).replace(/\\/g, '/')
+               );
                const initContent = await fs.readFile(initPath);
 
                await this.storageProvider!.uploadFile(
@@ -439,7 +445,9 @@ export class TranscodingService {
             // Upload media segments
             else if (segmentPattern.test(file)) {
                const segmentPath = path.join(bitrateDir, file);
-               const relativeSegmentPath = path.relative(path.join(process.cwd(), 'storage'), segmentPath);
+               const relativeSegmentPath = toStorageKey(
+                  path.relative(path.join(process.cwd(), config.LOCAL_STORAGE_PATH), segmentPath).replace(/\\/g, '/')
+               );
                const segmentContent = await fs.readFile(segmentPath);
 
                await this.storageProvider!.uploadFile(
@@ -606,13 +614,13 @@ export class TranscodingService {
             await this.initializeStorageProvider();
          }
 
-         const tempDir = path.join(process.cwd(), 'storage', 'temp');
+         const tempDir = path.join(process.cwd(), config.LOCAL_STORAGE_PATH, 'temp');
          await fs.mkdir(tempDir, { recursive: true });
 
          const fileName = path.basename(filePath);
          const tempPath = path.join(tempDir, `temp_${Date.now()}_${fileName}`);
 
-         const fileContent = await this.storageProvider!.downloadFile(filePath);
+         const fileContent = await this.storageProvider!.downloadFile(toStorageKey(filePath));
          await fs.writeFile(tempPath, fileContent);
 
          return tempPath;
@@ -674,7 +682,7 @@ export class TranscodingService {
     */
    private async ensureOutputDirectory(outputDir: string): Promise<void> {
       try {
-         const fullPath = path.join(process.cwd(), 'storage', outputDir);
+         const fullPath = path.join(process.cwd(), config.LOCAL_STORAGE_PATH, outputDir);
          await fs.mkdir(fullPath, { recursive: true });
       } catch (error: any) {
          console.error('Error creating output directory:', error);
@@ -691,8 +699,8 @@ export class TranscodingService {
       _result: { bitrate: number; playlist: string; segments: string[] }
    ): Promise<void> {
       try {
-         const playlistUrl = `bit_transcode/${id}/${bitrate}k/playlist.m3u8`;
-         const segmentsPath = `bit_transcode/${id}/${bitrate}k/`;
+         const playlistUrl = toStorageKey(`bit_transcode/${id}/${bitrate}k/playlist.m3u8`);
+         const segmentsPath = toStorageKey(`bit_transcode/${id}/${bitrate}k/`);
 
          await this.prisma.transcodedChapter.upsert({
             where: {
