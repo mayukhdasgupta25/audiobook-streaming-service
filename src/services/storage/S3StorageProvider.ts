@@ -5,6 +5,7 @@
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command, CopyObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { StorageProvider, FileMetadata } from './StorageProvider';
+import { config } from '../../config/env';
 
 export class S3StorageProvider implements StorageProvider {
    private s3Client: S3Client;
@@ -120,7 +121,7 @@ export class S3StorageProvider implements StorageProvider {
    /**
     * Get a public URL for a file
     */
-   async getFileUrl(filePath: string, expiresIn: number = 3600): Promise<string> {
+   async getFileUrl(filePath: string, expiresIn: number = config.AWS_SIGNED_URL_EXPIRES_IN): Promise<string> {
       try {
          const command = new GetObjectCommand({
             Bucket: this.bucket,

@@ -6,6 +6,7 @@ import Bull from 'bull';
 import { PrismaClient } from '@prisma/client';
 import { TranscodingService } from '../services/TranscodingService';
 import { MasterPlaylistJobData } from '../config/bull';
+import { toStorageKey } from '../utils/storageKeys';
 
 export class MasterPlaylistProcessor {
    private prisma: PrismaClient;
@@ -169,7 +170,7 @@ export class MasterPlaylistProcessor {
          await this.transcodingService['initializeStorageProvider']();
 
          // Upload master playlist to bit_transcode/{chapter_id} directory
-         const masterPlaylistPath = `bit_transcode/${chapterId}/master.m3u8`;
+         const masterPlaylistPath = toStorageKey(`bit_transcode/${chapterId}/master.m3u8`);
          await this.transcodingService['storageProvider']!.uploadFile(
             masterPlaylistPath,
             Buffer.from(masterPlaylist),

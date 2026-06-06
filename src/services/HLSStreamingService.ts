@@ -410,7 +410,7 @@ export class HLSStreamingService {
          let extractedBitrate = bitrate;
 
          if (transcodedChapter.segmentsPath) {
-            const pathMatch = transcodedChapter.segmentsPath.match(/bit_transcode\/([^/]+)\/(\d+)k/);
+            const pathMatch = transcodedChapter.segmentsPath.match(/(?:uploads\/)?bit_transcode\/([^/]+)\/(\d+)k/);
             if (pathMatch) {
                extractedChapterId = pathMatch[1];
                extractedBitrate = parseInt(pathMatch[2], 10);

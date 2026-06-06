@@ -7,6 +7,7 @@ import { PrismaClient } from '@prisma/client';
 import { TranscodingService } from '../services/TranscodingService';
 import { BitrateTranscodingJobData } from '../config/bull';
 import { config } from '../config/env';
+import { toStorageKey } from '../utils/storageKeys';
 
 export class BitrateTranscodingProcessor {
    private prisma: PrismaClient;
@@ -88,8 +89,8 @@ export class BitrateTranscodingProcessor {
       _result: { bitrate: number; playlist: string; segments: string[] }
    ): Promise<void> {
       try {
-         const playlistUrl = `bit_transcode/${chapterId}/${bitrate}k/playlist.m3u8`;
-         const segmentsPath = `bit_transcode/${chapterId}/${bitrate}k/`;
+         const playlistUrl = toStorageKey(`bit_transcode/${chapterId}/${bitrate}k/playlist.m3u8`);
+         const segmentsPath = toStorageKey(`bit_transcode/${chapterId}/${bitrate}k/`);
 
          await this.prisma.transcodedChapter.upsert({
             where: {
