@@ -30,18 +30,22 @@ interface RewriteResult {
    afterSample?: string;
 }
 
+const ENV_FILE_BY_NODE_ENV: Record<string, string | null> = {
+   development: '.env.development',
+   test: null,
+   testing: '.env.testing',
+   staging: '.env.staging',
+   production: '.env.production',
+};
+
 function loadEnv(): void {
    const cwd = process.cwd();
-   // Always load .env first (STREAMING_BASE_URL, STREAMING_PORT, etc.)
-   dotenv.config({ path: path.resolve(cwd, '.env') });
-
    const nodeEnv = process.env.NODE_ENV || 'development';
-   if (nodeEnv !== 'development') {
-      dotenv.config({ path: path.resolve(cwd, `.env.${nodeEnv}`) });
-   }
+   const envFile = ENV_FILE_BY_NODE_ENV[nodeEnv] ?? `.env.${nodeEnv}`;
 
-   // Local overrides (e.g. .env.local) take precedence
-   dotenv.config({ path: path.resolve(cwd, '.env.local') });
+   if (envFile) {
+      dotenv.config({ path: path.resolve(cwd, envFile) });
+   }
 }
 
 function parseArgs(argv: string[]): CliOptions {
@@ -76,10 +80,7 @@ function resolveTargetBaseUrl(override?: string): string {
       return fromEnv.replace(/\/+$/, '');
    }
 
-   const port = parseInt(
-      process.env.STREAMING_PORT || process.env.PORT || '8083',
-      10
-   );
+   const port = parseInt(process.env.PORT || '8083', 10);
    return `http://localhost:${port}`;
 }
 
@@ -252,19 +253,7 @@ function createRedisClient(): Redis {
       return new Redis(redisUrl);
    }
 
-   const options: { host: string; port: number; password?: string; db?: number } = {
-      host: process.env.REDIS_HOST || 'localhost',
-      port: parseInt(process.env.REDIS_PORT || '6379', 10)
-   };
-
-   if (process.env.REDIS_PASSWORD) {
-      options.password = process.env.REDIS_PASSWORD;
-   }
-   if (process.env.REDIS_DB) {
-      options.db = parseInt(process.env.REDIS_DB, 10);
-   }
-
-   return new Redis(options);
+   throw new Error('REDIS_URL is not set');
 }
 
 async function discoverChapterBitrates(
@@ -340,12 +329,16 @@ async function main(): Promise<void> {
    const targetBase = resolveTargetBaseUrl(options.baseUrl);
    if (!options.baseUrl && !process.env.STREAMING_BASE_URL?.trim()) {
       console.warn(
-         'STREAMING_BASE_URL is not set in .env; using fallback:',
+         'STREAMING_BASE_URL is not set; using fallback:',
          targetBase
       );
    }
 
-   const roots = ['storage/bit_transcode', 'bit_transcode'];
+   const roots = [
+      path.join(process.env.LOCAL_STORAGE_PATH || 'storage', 'bit_transcode'),
+      'storage/bit_transcode',
+      'bit_transcode',
+   ];
    const playlistFiles = await findPlaylistFiles(roots, options.chapterId);
 
    if (playlistFiles.length === 0) {

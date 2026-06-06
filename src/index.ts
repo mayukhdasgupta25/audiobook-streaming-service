@@ -22,13 +22,14 @@ import path from 'path';
 
 const app = express();
 
+if (config.TRUST_PROXY > 0) {
+   app.set('trust proxy', config.TRUST_PROXY);
+}
+
 // Middleware
 app.use(helmet());
 app.use(cors({
-   origin: [
-      process.env['CLIENT_URL'] || 'http://localhost:8081',
-      'http://localhost:5173'
-   ],
+   origin: true,
    credentials: true
 }));
 app.use(express.json());
@@ -36,22 +37,22 @@ app.use(express.urlencoded({ extended: true }));
 
 // Session configuration
 app.use(session({
-   secret: process.env['SESSION_SECRET'] || 'your-secret-key',
+   secret: config.SESSION_SECRET,
    resave: false,
    saveUninitialized: false,
    cookie: {
-      secure: process.env['NODE_ENV'] === 'production',
+      secure: config.USE_SECURE_COOKIES,
       maxAge: 24 * 60 * 60 * 1000 // 24 hours
    }
 }));
 
-// Serve transcoded segments statically (before authentication middleware)
-// Physical dir: storage/bit_transcode
-// Public URL prefix: /bit_transcode
-app.use(
-   '/bit_transcode',
-   express.static(path.join(process.cwd(), 'storage', 'bit_transcode'))
-);
+// Serve transcoded segments statically in development only
+if (config.NODE_ENV === 'development') {
+   app.use(
+      '/bit_transcode',
+      express.static(path.join(process.cwd(), config.LOCAL_STORAGE_PATH, 'bit_transcode'))
+   );
+}
 
 // Session validation middleware (exclude Bull Board and streaming routes)
 app.use((req, res, next) => {
@@ -272,7 +273,7 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('SIGUSR2', () => gracefulShutdown('SIGUSR2'));
 
 // Start server
-const port = config.STREAMING_PORT;
+const port = config.PORT;
 server = app.listen(port, () => {
    console.log(`🎵 Audio Streaming Service running on port ${port}`);
    console.log(`📚 Environment: ${config.NODE_ENV}`);

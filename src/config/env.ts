@@ -1,113 +1,181 @@
 import dotenv from 'dotenv';
 import path from 'path';
 
-const nodeEnv = process.env.NODE_ENV || 'development';
-const envFile = `.env${nodeEnv !== 'development' ? `.${nodeEnv}` : ''}`;
-dotenv.config({ path: path.resolve(process.cwd(), envFile) });
+const LOCALHOST_PATTERN = /localhost|127\.0\.0\.1/i;
 
-// Load environment variables
-dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
-
-/**
- * Environment configuration for the streaming service
- * Provides type-safe access to environment variables with defaults
- */
-// Construct DATABASE_URL if not provided directly
-const getDatabaseUrl = (): string => {
-   if (process.env.DATABASE_URL) {
-      return process.env.DATABASE_URL;
-   }
-   // Construct from individual DB variables
-   const host = process.env['DB_HOST'] || 'localhost';
-   const port = process.env['DB_PORT'] || '5432';
-   const name = process.env['DB_NAME'] || 'streaming_dev';
-   const user = process.env['DB_USER'] || 'postgres';
-   const password = process.env['DB_PASSWORD'] || '';
-   return `postgresql://${user}:${password}@${host}:${port}/${name}`;
+const ENV_FILE_BY_NODE_ENV: Record<string, string | null> = {
+   development: '.env.development',
+   test: null,
+   testing: '.env.testing',
+   staging: '.env.staging',
+   production: '.env.production',
 };
 
-// Set DATABASE_URL for Prisma Migrate and other tools
-if (!process.env.DATABASE_URL) {
-   process.env.DATABASE_URL = getDatabaseUrl();
+function getEnvFileForBootstrap(): string | null {
+   const bootstrapEnv = process.env['NODE_ENV'] ?? 'development';
+   return ENV_FILE_BY_NODE_ENV[bootstrapEnv] ?? `.env.${bootstrapEnv}`;
 }
 
+function loadEnvFiles(): void {
+   const envFile = getEnvFileForBootstrap();
+   if (envFile) {
+      dotenv.config({ path: path.resolve(process.cwd(), envFile) });
+   }
+}
+
+function requireEnv(key: string): string {
+   const value = process.env[key];
+   if (value === undefined) {
+      throw new Error(`Missing required environment variable: ${key}`);
+   }
+   return value;
+}
+
+function requireIntEnv(key: string): number {
+   const raw = requireEnv(key);
+   const parsed = parseInt(raw, 10);
+   if (Number.isNaN(parsed)) {
+      throw new Error(`Environment variable ${key} must be a valid integer`);
+   }
+   return parsed;
+}
+
+function parseTranscodingBitrates(raw: string): number[] {
+   const envValue = raw.trim();
+
+   if (envValue.startsWith('[') && envValue.endsWith(']')) {
+      try {
+         const parsed = JSON.parse(envValue);
+         if (Array.isArray(parsed)) {
+            const bitrates = parsed
+               .map(b => (typeof b === 'number' ? b : parseInt(String(b), 10)))
+               .filter(b => !Number.isNaN(b) && b > 0);
+            if (bitrates.length > 0) {
+               return bitrates;
+            }
+         }
+      } catch {
+         // Fall through to comma-separated parsing
+      }
+   }
+
+   const bitrates = envValue
+      .split(',')
+      .map(b => b.trim())
+      .filter(b => b.length > 0)
+      .map(b => parseInt(b, 10))
+      .filter(b => !Number.isNaN(b) && b > 0);
+
+   if (bitrates.length === 0) {
+      throw new Error('TRANSCODING_BITRATES must contain at least one valid positive integer');
+   }
+
+   return bitrates;
+}
+
+function assertNoLocalhost(envVar: string, value: string, nodeEnv: string): void {
+   if (LOCALHOST_PATTERN.test(value)) {
+      throw new Error(`${envVar} must not reference localhost in ${nodeEnv}`);
+   }
+}
+
+function validateNoLocalhostInStagingOrProduction(
+   nodeEnv: string,
+   values: {
+      DATABASE_URL: string;
+      REDIS_URL: string;
+      RABBITMQ_URL: string;
+      STREAMING_BASE_URL: string;
+      AUTH_SERVICE_URL: string;
+      JWKS_ENDPOINT: string;
+   }
+): void {
+   if (nodeEnv !== 'staging' && nodeEnv !== 'production') {
+      return;
+   }
+
+   assertNoLocalhost('DATABASE_URL', values.DATABASE_URL, nodeEnv);
+   assertNoLocalhost('REDIS_URL', values.REDIS_URL, nodeEnv);
+   assertNoLocalhost('RABBITMQ_URL', values.RABBITMQ_URL, nodeEnv);
+   assertNoLocalhost('STREAMING_BASE_URL', values.STREAMING_BASE_URL, nodeEnv);
+   assertNoLocalhost('AUTH_SERVICE_URL', values.AUTH_SERVICE_URL, nodeEnv);
+   assertNoLocalhost('JWKS_ENDPOINT', values.JWKS_ENDPOINT, nodeEnv);
+}
+
+loadEnvFiles();
+
+const nodeEnv = requireEnv('NODE_ENV');
+
+const DATABASE_URL = requireEnv('DATABASE_URL');
+const REDIS_URL = requireEnv('REDIS_URL');
+const RABBITMQ_URL = requireEnv('RABBITMQ_URL');
+const STREAMING_BASE_URL = requireEnv('STREAMING_BASE_URL');
+const AUTH_SERVICE_URL = requireEnv('AUTH_SERVICE_URL');
+const JWKS_ENDPOINT = requireEnv('JWKS_ENDPOINT');
+const STORAGE_PROVIDER = requireEnv('STORAGE_PROVIDER');
+
+validateNoLocalhostInStagingOrProduction(nodeEnv, {
+   DATABASE_URL,
+   REDIS_URL,
+   RABBITMQ_URL,
+   STREAMING_BASE_URL,
+   AUTH_SERVICE_URL,
+   JWKS_ENDPOINT,
+});
+
+if (nodeEnv !== 'development' && STORAGE_PROVIDER !== 's3') {
+   throw new Error(`STORAGE_PROVIDER must be s3 when NODE_ENV is ${nodeEnv}`);
+}
+
+const USE_SECURE_COOKIES = nodeEnv === 'production' || nodeEnv === 'staging' || nodeEnv === 'testing';
+
 export const config = {
-   // Server configuration
    NODE_ENV: nodeEnv,
-   STREAMING_PORT: parseInt(process.env.STREAMING_PORT || '8083', 10),
-   DB_HOST: process.env['DB_HOST'] || 'localhost',
-   DB_PORT: parseInt(process.env['DB_PORT'] || '5432', 10),
-   DB_NAME: process.env['DB_NAME'] || 'streaming_dev',
-   DB_USER: process.env['DB_USER'] || 'postgres',
-   DB_PASSWORD: process.env['DB_PASSWORD'] || '',
-   DATABASE_URL: process.env.DATABASE_URL,
+   PORT: requireIntEnv('PORT'),
+   TRUST_PROXY: requireIntEnv('TRUST_PROXY'),
+   USE_SECURE_COOKIES,
+   SESSION_SECRET: requireEnv('SESSION_SECRET'),
 
-   // Client configuration
-   CLIENT_URL: process.env.CLIENT_URL || 'http://localhost:8081',
+   DATABASE_URL,
+   REDIS_URL,
+   REDIS_PASSWORD: requireEnv('REDIS_PASSWORD'),
 
-   // Redis configuration
-   REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
-   REDIS_PASSWORD: process.env.REDIS_PASSWORD || undefined,
+   RABBITMQ_URL,
+   RABBITMQ_MESSAGE_TTL: requireIntEnv('RABBITMQ_MESSAGE_TTL'),
 
-   // RabbitMQ configuration
-   RABBITMQ_URL: process.env.RABBITMQ_URL || 'amqp://localhost:5672',
-   RABBITMQ_MESSAGE_TTL: parseInt(process.env.RABBITMQ_MESSAGE_TTL || '3600000', 10), // Message TTL in milliseconds (default: 1 hour)
+   BULL_REDIS_HOST: requireEnv('BULL_REDIS_HOST'),
+   BULL_JOB_TIMEOUT: requireIntEnv('BULL_JOB_TIMEOUT'),
+   BULL_MAX_ATTEMPTS: requireIntEnv('BULL_MAX_ATTEMPTS'),
+   BULL_BACKOFF_DELAY: requireIntEnv('BULL_BACKOFF_DELAY'),
 
-   // Bull Queue configuration
-   BULL_REDIS_HOST: process.env.BULL_REDIS_HOST || process.env.REDIS_URL || 'redis://localhost:6379',
-   BULL_JOB_TIMEOUT: parseInt(process.env.BULL_JOB_TIMEOUT || '3600000', 10), // 1 hour
-   BULL_MAX_ATTEMPTS: parseInt(process.env.BULL_MAX_ATTEMPTS || '3', 10),
-   BULL_BACKOFF_DELAY: parseInt(process.env.BULL_BACKOFF_DELAY || '30000', 10), // 30 seconds
+   STORAGE_PROVIDER,
+   LOCAL_STORAGE_PATH: requireEnv('LOCAL_STORAGE_PATH'),
+   AWS_S3_BUCKET: requireEnv('AWS_S3_BUCKET'),
+   AWS_S3_REGION: requireEnv('AWS_S3_REGION'),
+   AWS_ACCESS_KEY_ID: requireEnv('AWS_ACCESS_KEY_ID'),
+   AWS_SECRET_ACCESS_KEY: requireEnv('AWS_SECRET_ACCESS_KEY'),
+   AWS_S3_ENDPOINT: requireEnv('AWS_S3_ENDPOINT'),
+   AWS_SIGNED_URL_EXPIRES_IN: requireIntEnv('AWS_SIGNED_URL_EXPIRES_IN'),
 
-   // Storage configuration
-   // Storage provider selection
-   STORAGE_PROVIDER: process.env['STORAGE_PROVIDER'] || 'local', // local, s3
+   FFMPEG_PATH: requireEnv('FFMPEG_PATH'),
+   FFPROBE_PATH: requireEnv('FFPROBE_PATH'),
 
-   // AWS S3 configuration (if using S3 storage)
-   AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID || '',
-   AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY || '',
-   AWS_REGION: process.env.AWS_REGION || 'us-east-1',
-   AWS_S3_BUCKET: process.env.AWS_S3_BUCKET || '',
+   HLS_SEGMENT_DURATION: requireIntEnv('HLS_SEGMENT_DURATION'),
+   TRANSCODING_BITRATES: parseTranscodingBitrates(requireEnv('TRANSCODING_BITRATES')),
+   STREAMING_CACHE_TTL: requireIntEnv('STREAMING_CACHE_TTL'),
+   STREAMING_BASE_URL,
 
-   // FFmpeg configuration
-   FFMPEG_PATH: process.env.FFMPEG_PATH || 'ffmpeg',
-   FFPROBE_PATH: process.env.FFPROBE_PATH || 'ffprobe',
+   RATE_LIMIT_WINDOW_MS: requireIntEnv('RATE_LIMIT_WINDOW_MS'),
+   RATE_LIMIT_MAX_REQUESTS: requireIntEnv('RATE_LIMIT_MAX_REQUESTS'),
 
-   // Streaming configuration
-   HLS_SEGMENT_DURATION: parseInt(process.env['HLS_SEGMENT_DURATION'] || '4', 10), // seconds
-   TRANSCODING_BITRATES: process.env['TRANSCODING_BITRATES']?.split(',').map(b => parseInt(b, 10)) || [64, 128, 256], // kbps
-   STREAMING_CACHE_TTL: parseInt(process.env['STREAMING_CACHE_TTL'] || '3600', 10), // seconds
-   STREAMING_BASE_URL: process.env['STREAMING_BASE_URL'] || `http://192.168.1.6:${parseInt(process.env.STREAMING_PORT || '8083', 10)}`,
+   LOG_LEVEL: requireEnv('LOG_LEVEL'),
+   LOG_DIR: requireEnv('LOG_DIR'),
 
-   // Rate limiting
-   RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10), // 15 minutes
-   RATE_LIMIT_MAX_REQUESTS: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10),
+   HEALTH_CHECK_INTERVAL: requireIntEnv('HEALTH_CHECK_INTERVAL'),
+   TRANSCODING_TIMEOUT: requireIntEnv('TRANSCODING_TIMEOUT'),
+   MAX_TRANSCODING_WORKERS: requireIntEnv('MAX_TRANSCODING_WORKERS'),
+   CACHE_TTL: requireIntEnv('CACHE_TTL'),
 
-   // Logging
-   LOG_LEVEL: process.env.LOG_LEVEL || 'info',
-   LOG_FORMAT: process.env.LOG_FORMAT || 'combined',
-
-   // CORS configuration
-   CORS_ORIGINS: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : ['http://localhost:8081'],
-
-   // Health check configuration
-   HEALTH_CHECK_INTERVAL: parseInt(process.env.HEALTH_CHECK_INTERVAL || '30000', 10), // 30 seconds
-
-   // Transcoding configuration
-   TRANSCODING_TIMEOUT: parseInt(process.env.TRANSCODING_TIMEOUT || '3600000', 10), // 1 hour
-   MAX_TRANSCODING_WORKERS: parseInt(process.env.MAX_TRANSCODING_WORKERS || '2', 10),
-
-   // Cache configuration
-   CACHE_TTL: parseInt(process.env.CACHE_TTL || '3600', 10), // 1 hour
-
-   // File upload limits
-   MAX_FILE_SIZE: parseInt(process.env.MAX_FILE_SIZE || '104857600', 10), // 100MB
-   ALLOWED_AUDIO_FORMATS: process.env.ALLOWED_AUDIO_FORMATS || 'mp3,wav,flac,aac,m4a',
-
-   // Analytics configuration
-   ANALYTICS_ENABLED: process.env.ANALYTICS_ENABLED === 'true',
-   ANALYTICS_RETENTION_DAYS: parseInt(process.env.ANALYTICS_RETENTION_DAYS || '30', 10),
-
-   JWKS_ENDPOINT: process.env['JWKS_ENDPOINT'] || 'http://localhost:8080/auth/.well-known/jwks.json',
-   AUTH_SERVICE_URL: process.env['AUTH_SERVICE_URL'] || 'http://localhost:8080'
+   AUTH_SERVICE_URL,
+   JWKS_ENDPOINT,
 };

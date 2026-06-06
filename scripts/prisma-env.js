@@ -1,41 +1,52 @@
 /**
  * Prisma Environment Setup Script
  *
- * WHY THIS EXISTS:
- * - Prisma CLI commands (migrate, generate, studio, etc.) run independently of the application
- * - They don't execute TypeScript files like prisma.config.ts or env.ts
- * - Prisma CLI automatically loads .env files, but if DATABASE_URL isn't set and you only
- *   have DB_HOST, DB_PORT, etc., this script constructs DATABASE_URL before running Prisma
- *
- * This script ensures DATABASE_URL is available for Prisma CLI commands by constructing it
- * from individual DB environment variables if not already set in the .env file.
+ * Loads the correct .env.{NODE_ENV} file before running Prisma CLI commands,
+ * matching the bootstrap logic in src/config/env.ts.
  */
-require("dotenv").config();
+const dotenv = require('dotenv');
+const path = require('path');
+const { execSync } = require('child_process');
 
-// Construct DATABASE_URL if not provided directly
-if (!process.env.DATABASE_URL) {
-  const host = process.env.DB_HOST || "localhost";
-  const port = process.env.DB_PORT || "5432";
-  const name = process.env.DB_NAME || "streaming_dev";
-  const user = process.env.DB_USER || "postgres";
-  const password = process.env.DB_PASSWORD || "";
+const ENV_FILE_BY_NODE_ENV = {
+   development: '.env.development',
+   test: null,
+   testing: '.env.testing',
+   staging: '.env.staging',
+   production: '.env.production',
+};
 
-  // URL encode password to handle special characters
-  const encodedPassword = encodeURIComponent(password);
-  process.env.DATABASE_URL = `postgresql://${user}:${encodedPassword}@${host}:${port}/${name}`;
+function getEnvFileForBootstrap() {
+   const bootstrapEnv = process.env.NODE_ENV ?? 'development';
+   return ENV_FILE_BY_NODE_ENV[bootstrapEnv] ?? `.env.${bootstrapEnv}`;
 }
 
-// Execute the Prisma command passed as arguments
-const { execSync } = require("child_process");
+function loadEnvFiles() {
+   const envFile = getEnvFileForBootstrap();
+   if (envFile) {
+      dotenv.config({ path: path.resolve(process.cwd(), envFile) });
+   }
+}
+
+loadEnvFiles();
+
+if (!process.env.DATABASE_URL) {
+   console.error('DATABASE_URL is not set. Ensure the correct .env.{NODE_ENV} file exists.');
+   process.exit(1);
+}
+
 const prismaCommand = process.argv.slice(2);
 
+if (prismaCommand.length === 0) {
+   console.error('Usage: node scripts/prisma-env.js <prisma-command> [args...]');
+   process.exit(1);
+}
+
 try {
-  // Use execSync for better cross-platform compatibility
-  execSync(`npx prisma ${prismaCommand.join(" ")}`, {
-    stdio: "inherit",
-    env: process.env,
-  });
+   execSync(`npx prisma ${prismaCommand.join(' ')}`, {
+      stdio: 'inherit',
+      env: process.env,
+   });
 } catch (error) {
-  // Exit with the same code as the command
-  process.exit(error.status || 1);
+   process.exit(error.status || 1);
 }

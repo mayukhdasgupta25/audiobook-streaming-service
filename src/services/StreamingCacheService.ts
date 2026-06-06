@@ -6,6 +6,7 @@ import { RedisConnection } from '../config/redis';
 import { StorageProvider } from './storage/StorageProvider';
 import { StorageFactory } from './storage/StorageFactory';
 import { config } from '../config/env';
+import { toStorageKey } from '../utils/storageKeys';
 
 export interface CacheStats {
    hits: number;
@@ -282,8 +283,8 @@ export class StreamingCacheService {
             // Try .m4s first (fMP4), fallback to .ts (legacy)
             const segmentIdM4s = `segment_${i.toString().padStart(3, '0')}.m4s`;
             const segmentIdTs = `segment_${i.toString().padStart(3, '0')}.ts`;
-            const storagePathM4s = `bit_transcode/${chapterId}/${bitrate}k/${segmentIdM4s}`;
-            const storagePathTs = `bit_transcode/${chapterId}/${bitrate}k/${segmentIdTs}`;
+            const storagePathM4s = toStorageKey(`bit_transcode/${chapterId}/${bitrate}k/${segmentIdM4s}`);
+            const storagePathTs = toStorageKey(`bit_transcode/${chapterId}/${bitrate}k/${segmentIdTs}`);
 
             try {
                // Try to load .m4s segment first
