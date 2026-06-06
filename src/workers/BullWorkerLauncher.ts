@@ -7,6 +7,7 @@ import { BullQueueManager } from '../services/BullQueueManager';
 import { BitrateTranscodingProcessor } from './BitrateTranscodingProcessor';
 import { MasterPlaylistProcessor } from './MasterPlaylistProcessor';
 import { QUEUE_NAMES, getBitrateQueueNames } from '../config/bull';
+import { bullLogger } from '../config/logger';
 
 export class BullWorkerLauncher {
    private static instance: BullWorkerLauncher;
@@ -38,12 +39,12 @@ export class BullWorkerLauncher {
     */
    public async start(): Promise<void> {
       if (this.isRunning) {
-         console.log('Bull workers are already running');
+         bullLogger.info('Bull workers are already running');
          return;
       }
 
       try {
-         console.log('Starting Bull workers...');
+         bullLogger.info('Starting Bull workers...');
 
          // Ensure Bull queues are initialized
          if (!this.bullQueueManager.isReady()) {
@@ -57,10 +58,10 @@ export class BullWorkerLauncher {
          await this.startMasterPlaylistProcessor();
 
          this.isRunning = true;
-         console.log('All Bull workers started successfully');
+         bullLogger.info('All Bull workers started successfully');
 
       } catch (error: any) {
-         console.error('Failed to start Bull workers:', error);
+         bullLogger.error({ err: error }, 'Failed to start Bull workers');
          throw error;
       }
    }
@@ -82,7 +83,7 @@ export class BullWorkerLauncher {
             return await this.bitrateProcessor.processBitrateTranscoding(job);
          });
 
-         console.log(`Started bitrate processor for queue: ${queueName}`);
+         bullLogger.info({ queueName }, 'Started bitrate processor for queue');
       }
    }
 
@@ -100,7 +101,7 @@ export class BullWorkerLauncher {
          return await this.masterProcessor.processMasterPlaylist(job);
       });
 
-      console.log(`Started master playlist processor for queue: ${QUEUE_NAMES.MASTER_PLAYLIST}`);
+      bullLogger.info({ queueName: QUEUE_NAMES.MASTER_PLAYLIST }, 'Started master playlist processor for queue');
    }
 
    /**
@@ -108,21 +109,21 @@ export class BullWorkerLauncher {
     */
    public async stop(): Promise<void> {
       if (!this.isRunning) {
-         console.log('Bull workers are not running');
+         bullLogger.info('Bull workers are not running');
          return;
       }
 
       try {
-         console.log('Stopping Bull workers...');
+         bullLogger.info('Stopping Bull workers...');
 
          // Close all queues (this will stop processing)
          await this.bullQueueManager.close();
 
          this.isRunning = false;
-         console.log('All Bull workers stopped');
+         bullLogger.info('All Bull workers stopped');
 
       } catch (error: any) {
-         console.error('Error stopping Bull workers:', error);
+         bullLogger.error({ err: error }, 'Error stopping Bull workers');
       }
    }
 
@@ -156,7 +157,7 @@ export class BullWorkerLauncher {
             recentJobs
          };
       } catch (error: any) {
-         console.error('Error getting worker stats:', error);
+         bullLogger.error({ err: error }, 'Error getting worker stats');
          return {
             isRunning: this.isRunning,
             queueStats: {},
@@ -176,14 +177,14 @@ export class BullWorkerLauncher {
          // Test database connection
          await this.prisma.$queryRaw`SELECT 1`;
 
-         console.log('Bull worker test results:', {
+         bullLogger.info({
             bullQueuesReady: isReady,
             databaseConnected: true
-         });
+         }, 'Bull worker test results');
 
          return isReady;
       } catch (error: any) {
-         console.error('Bull worker test failed:', error);
+         bullLogger.error({ err: error }, 'Bull worker test failed');
          return false;
       }
    }

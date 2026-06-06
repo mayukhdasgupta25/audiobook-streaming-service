@@ -4,6 +4,7 @@
  */
 import Redis from 'ioredis';
 import { config } from './env';
+import { redisLogger } from './logger';
 
 export interface RedisConfig {
    host: string;
@@ -17,16 +18,16 @@ export class RedisConnection {
    private static instance: RedisConnection;
    private redis: Redis;
 
-   private constructor(config: RedisConfig) {
+   private constructor(redisConfig: RedisConfig) {
       const redisOptions: any = {
-         host: config.host,
-         port: config.port,
-         db: config.db || 0,
-         lazyConnect: config.lazyConnect || true,
+         host: redisConfig.host,
+         port: redisConfig.port,
+         db: redisConfig.db || 0,
+         lazyConnect: redisConfig.lazyConnect || true,
       };
 
-      if (config.password) {
-         redisOptions.password = config.password;
+      if (redisConfig.password) {
+         redisOptions.password = redisConfig.password;
       }
 
       this.redis = new Redis(redisOptions);
@@ -34,9 +35,6 @@ export class RedisConnection {
       this.setupEventHandlers();
    }
 
-   /**
-    * Get Redis connection instance
-    */
    public static getInstance(redisConfig?: RedisConfig): RedisConnection {
       if (!RedisConnection.instance) {
          const parsedConfig = redisConfig ?? RedisConfigHelper.getConfigFromEnv();
@@ -46,81 +44,63 @@ export class RedisConnection {
       return RedisConnection.instance;
    }
 
-   /**
-    * Get Redis client
-    */
    public getClient(): Redis {
       return this.redis;
    }
 
-   /**
-    * Setup Redis event handlers
-    */
    private setupEventHandlers(): void {
       this.redis.on('connect', () => {
-         console.log('Redis connected successfully');
+         redisLogger.info('Redis connected successfully');
       });
 
       this.redis.on('ready', () => {
-         console.log('Redis ready to accept commands');
+         redisLogger.info('Redis ready to accept commands');
       });
 
       this.redis.on('error', (error) => {
-         console.error('Redis connection error:', error);
+         redisLogger.error({ err: error }, 'Redis connection error');
       });
 
       this.redis.on('close', () => {
-         console.log('Redis connection closed');
+         redisLogger.warn('Redis connection closed');
       });
 
       this.redis.on('reconnecting', () => {
-         console.log('Redis reconnecting...');
+         redisLogger.info('Redis reconnecting...');
       });
 
       this.redis.on('end', () => {
-         console.log('Redis connection ended');
+         redisLogger.warn('Redis connection ended');
       });
    }
 
-   /**
-    * Test Redis connection
-    */
    public async testConnection(): Promise<boolean> {
       try {
          await this.redis.ping();
          return true;
       } catch (error) {
-         console.error('Redis connection test failed:', error);
+         redisLogger.error({ err: error }, 'Redis connection test failed');
          return false;
       }
    }
 
-   /**
-    * Get Redis info
-    */
    public async getInfo(): Promise<string> {
       try {
          return await this.redis.info();
       } catch (error) {
-         console.error('Failed to get Redis info:', error);
+         redisLogger.error({ err: error }, 'Failed to get Redis info');
          throw error;
       }
    }
 
-   /**
-    * Close Redis connection
-    */
    public async close(): Promise<void> {
       try {
          await this.redis.quit();
       } catch (error) {
-         console.error('Error closing Redis connection:', error);
+         redisLogger.error({ err: error }, 'Error closing Redis connection');
       }
    }
 
-   /**
-    * Get Redis memory usage
-    */
    public async getMemoryUsage(): Promise<{
       usedMemory: string;
       usedMemoryHuman: string;
@@ -131,58 +111,49 @@ export class RedisConnection {
       try {
          const info = await this.redis.info('memory');
          const lines = info.split('\r\n');
-         const memoryInfo: any = {};
+         const memoryInfo: Record<string, string> = {};
 
          lines.forEach(line => {
             if (line.includes(':')) {
                const [key, value] = line.split(':');
                if (key) {
-                  memoryInfo[key] = value;
+                  memoryInfo[key] = value ?? '';
                }
             }
          });
 
          return {
-            usedMemory: memoryInfo.used_memory || '0',
-            usedMemoryHuman: memoryInfo.used_memory_human || '0B',
-            usedMemoryRss: memoryInfo.used_memory_rss || '0',
-            usedMemoryPeak: memoryInfo.used_memory_peak || '0',
-            usedMemoryPeakHuman: memoryInfo.used_memory_peak_human || '0B',
+            usedMemory: memoryInfo['used_memory'] || '0',
+            usedMemoryHuman: memoryInfo['used_memory_human'] || '0B',
+            usedMemoryRss: memoryInfo['used_memory_rss'] || '0',
+            usedMemoryPeak: memoryInfo['used_memory_peak'] || '0',
+            usedMemoryPeakHuman: memoryInfo['used_memory_peak_human'] || '0B',
          };
       } catch (error) {
-         console.error('Failed to get Redis memory usage:', error);
+         redisLogger.error({ err: error }, 'Failed to get Redis memory usage');
          throw error;
       }
    }
 
-   /**
-    * Get Redis key count
-    */
    public async getKeyCount(): Promise<number> {
       try {
          return await this.redis.dbsize();
       } catch (error) {
-         console.error('Failed to get Redis key count:', error);
+         redisLogger.error({ err: error }, 'Failed to get Redis key count');
          throw error;
       }
    }
 
-   /**
-    * Clear all Redis data (use with caution)
-    */
    public async clearAll(): Promise<void> {
       try {
          await this.redis.flushall();
-         console.log('All Redis data cleared');
+         redisLogger.warn('All Redis data cleared');
       } catch (error) {
-         console.error('Failed to clear Redis data:', error);
+         redisLogger.error({ err: error }, 'Failed to clear Redis data');
          throw error;
       }
    }
 
-   /**
-    * Clear specific pattern keys
-    */
    public async clearPattern(pattern: string): Promise<number> {
       try {
          const keys = await this.redis.keys(pattern);
@@ -191,19 +162,13 @@ export class RedisConnection {
          }
          return keys.length;
       } catch (error) {
-         console.error('Failed to clear pattern keys:', error);
+         redisLogger.error({ err: error, pattern }, 'Failed to clear pattern keys');
          throw error;
       }
    }
 }
 
-/**
- * Redis configuration helper
- */
 export class RedisConfigHelper {
-   /**
-    * Get Redis configuration from environment variables
-    */
    public static getConfigFromEnv(): RedisConfig {
       const redisUrl = new URL(config.REDIS_URL);
       const dbPath = redisUrl.pathname.replace(/^\//, '');
@@ -218,31 +183,25 @@ export class RedisConfigHelper {
       };
    }
 
-   /**
-    * Validate Redis configuration
-    */
-   public static validateConfig(config: RedisConfig): boolean {
-      if (!config.host || !config.port) {
+   public static validateConfig(redisConfig: RedisConfig): boolean {
+      if (!redisConfig.host || !redisConfig.port) {
          return false;
       }
 
-      if (config.port < 1 || config.port > 65535) {
+      if (redisConfig.port < 1 || redisConfig.port > 65535) {
          return false;
       }
 
-      if (config.db && (config.db < 0 || config.db > 15)) {
+      if (redisConfig.db && (redisConfig.db < 0 || redisConfig.db > 15)) {
          return false;
       }
 
       return true;
    }
 
-   /**
-    * Get Redis URL from configuration
-    */
-   public static getRedisUrl(config: RedisConfig): string {
-      const auth = config.password ? `:${config.password}@` : '';
-      const db = config.db ? `/${config.db}` : '';
-      return `redis://${auth}${config.host}:${config.port}${db}`;
+   public static getRedisUrl(redisConfig: RedisConfig): string {
+      const auth = redisConfig.password ? `:${redisConfig.password}@` : '';
+      const db = redisConfig.db ? `/${redisConfig.db}` : '';
+      return `redis://${auth}${redisConfig.host}:${redisConfig.port}${db}`;
    }
 }

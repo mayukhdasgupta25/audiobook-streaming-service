@@ -7,6 +7,7 @@ import { StorageProvider } from './storage/StorageProvider';
 import { StorageFactory } from './storage/StorageFactory';
 import { config } from '../config/env';
 import { toStorageKey } from '../utils/storageKeys';
+import { redisLogger } from '../config/logger';
 
 export interface CacheStats {
    hits: number;
@@ -60,7 +61,7 @@ export class StreamingCacheService {
          this.updateHitRate();
          return null;
       } catch (error: any) {
-         console.error('Cache get error:', error);
+         redisLogger.error({ err: error }, 'Cache get error');
          this.stats.misses++;
          this.updateHitRate();
          return null;
@@ -98,7 +99,7 @@ export class StreamingCacheService {
 
          return true;
       } catch (error: any) {
-         console.error('Cache set error:', error);
+         redisLogger.error({ err: error }, 'Cache set error');
          return false;
       }
    }
@@ -112,7 +113,7 @@ export class StreamingCacheService {
          await this.redis.getClient().del(`${key}:meta`);
          return deleted > 0;
       } catch (error: any) {
-         console.error('Cache delete error:', error);
+         redisLogger.error({ err: error }, 'Cache delete error');
          return false;
       }
    }
@@ -125,7 +126,7 @@ export class StreamingCacheService {
          const exists = await this.redis.getClient().exists(key);
          return exists === 1;
       } catch (error: any) {
-         console.error('Cache exists error:', error);
+         redisLogger.error({ err: error }, 'Cache exists error');
          return false;
       }
    }
@@ -155,11 +156,11 @@ export class StreamingCacheService {
 
             return content;
          } catch (storageError: any) {
-            console.error('Storage fallback error:', storageError);
+            redisLogger.error({ err: storageError }, 'Storage fallback error');
             return null;
          }
       } catch (error: any) {
-         console.error('Get with fallback error:', error);
+         redisLogger.error({ err: error }, 'Get with fallback error');
          return null;
       }
    }
@@ -183,7 +184,7 @@ export class StreamingCacheService {
 
          return await this.set(key, content, config.STREAMING_CACHE_TTL, contentType);
       } catch (error: any) {
-         console.error('Cache playlist error:', error);
+         redisLogger.error({ err: error }, 'Cache playlist error');
          return false;
       }
    }
@@ -204,7 +205,7 @@ export class StreamingCacheService {
          const content = await this.get(key);
          return content ? content.toString('utf-8') : null;
       } catch (error: any) {
-         console.error('Get cached playlist error:', error);
+         redisLogger.error({ err: error }, 'Get cached playlist error');
          return null;
       }
    }
@@ -225,7 +226,7 @@ export class StreamingCacheService {
 
          return await this.set(key, segmentContent, config.STREAMING_CACHE_TTL, contentType);
       } catch (error: any) {
-         console.error('Cache segment error:', error);
+         redisLogger.error({ err: error }, 'Cache segment error');
          return false;
       }
    }
@@ -242,7 +243,7 @@ export class StreamingCacheService {
          const key = `stream:segment:${chapterId}:${bitrate}:${segmentId}`;
          return await this.get(key);
       } catch (error: any) {
-         console.error('Get cached segment error:', error);
+         redisLogger.error({ err: error }, 'Get cached segment error');
          return null;
       }
    }
@@ -263,7 +264,7 @@ export class StreamingCacheService {
 
          return await this.getWithFallback(key, storagePath, contentType);
       } catch (error: any) {
-         console.error('Get segment with fallback error:', error);
+         redisLogger.error({ err: error }, 'Get segment with fallback error');
          return null;
       }
    }
@@ -309,14 +310,14 @@ export class StreamingCacheService {
                   loadedCount++;
                }
             } catch (error: any) {
-               console.error(`Failed to preload segment ${segmentIdM4s} or ${segmentIdTs}:`, error);
+               redisLogger.error({ err: error, segmentIdM4s, segmentIdTs }, 'Failed to preload segment');
             }
          }
       } catch (error: any) {
-         console.error('Preload chapter segments error:', error);
+         redisLogger.error({ err: error }, 'Preload chapter segments error');
       }
 
-      console.log(`Preloaded ${loadedCount}/${segmentCount} segments for chapter ${chapterId}, bitrate ${bitrate}`);
+      redisLogger.info({ chapterId, bitrate, loadedCount, segmentCount }, 'Preloaded segments for chapter');
       return loadedCount;
    }
 
@@ -332,10 +333,10 @@ export class StreamingCacheService {
             await this.redis.getClient().del(...keys);
          }
 
-         console.log(`Cleared ${keys.length} cache entries for chapter ${chapterId}`);
+         redisLogger.info({ chapterId, count: keys.length }, 'Cleared cache entries for chapter');
          return keys.length;
       } catch (error: any) {
-         console.error('Clear chapter cache error:', error);
+         redisLogger.error({ err: error }, 'Clear chapter cache error');
          return 0;
       }
    }
@@ -352,10 +353,10 @@ export class StreamingCacheService {
             await this.redis.getClient().del(...keys);
          }
 
-         console.log(`Cleared ${keys.length} cache entries`);
+         redisLogger.info({ count: keys.length }, 'Cleared cache entries');
          return keys.length;
       } catch (error: any) {
-         console.error('Clear all cache error:', error);
+         redisLogger.error({ err: error }, 'Clear all cache error');
          return 0;
       }
    }
@@ -377,7 +378,7 @@ export class StreamingCacheService {
             cacheKeys
          };
       } catch (error: any) {
-         console.error('Get cache stats error:', error);
+         redisLogger.error({ err: error }, 'Get cache stats error');
          return {
             ...this.stats,
             redisInfo: null,
@@ -414,7 +415,7 @@ export class StreamingCacheService {
             expiresAt: new Date(metadata.expiresAt)
          };
       } catch (error: any) {
-         console.error('Get cache metadata error:', error);
+         redisLogger.error({ err: error }, 'Get cache metadata error');
          return null;
       }
    }
@@ -481,7 +482,7 @@ export class StreamingCacheService {
 
          return true;
       } catch (error: any) {
-         console.error('Cache test failed:', error);
+         redisLogger.error({ err: error }, 'Cache test failed');
          return false;
       }
    }

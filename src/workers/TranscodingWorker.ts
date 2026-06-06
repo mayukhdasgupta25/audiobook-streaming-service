@@ -6,6 +6,7 @@ import { RabbitMQFactory, TranscodingJobData } from '../config/rabbitmq';
 import { BullQueueManager } from '../services/BullQueueManager';
 import { PrismaClient } from '@prisma/client';
 import { config } from '../config/env';
+import { logger } from '../config/logger';
 
 export class TranscodingWorker {
    private prisma: PrismaClient;
@@ -22,7 +23,7 @@ export class TranscodingWorker {
     */
    async start(): Promise<void> {
       if (this.isRunning) {
-         console.log('Transcoding worker is already running');
+         logger.info('Transcoding worker is already running');
          return;
       }
 
@@ -33,7 +34,7 @@ export class TranscodingWorker {
          // Initialize Bull queues
          await this.bullQueueManager.initialize();
 
-         console.log('Starting transcoding worker...');
+         logger.info('Starting transcoding worker...');
 
          // Start consuming from all priority queues
          await Promise.all([
@@ -43,10 +44,10 @@ export class TranscodingWorker {
          ]);
 
          this.isRunning = true;
-         console.log('Transcoding worker started successfully');
+         logger.info('Transcoding worker started successfully');
 
       } catch (error: any) {
-         console.error('Failed to start transcoding worker:', error);
+         logger.error({ err: error }, 'Failed to start transcoding worker');
          throw error;
       }
    }
@@ -56,7 +57,7 @@ export class TranscodingWorker {
     */
    async stop(): Promise<void> {
       if (!this.isRunning) {
-         console.log('Transcoding worker is not running');
+         logger.info('Transcoding worker is not running');
          return;
       }
 
@@ -64,9 +65,9 @@ export class TranscodingWorker {
          await RabbitMQFactory.shutdown();
          await this.bullQueueManager.close();
          this.isRunning = false;
-         console.log('Transcoding worker stopped');
+         logger.info('Transcoding worker stopped');
       } catch (error: any) {
-         console.error('Error stopping transcoding worker:', error);
+         logger.error({ err: error }, 'Error stopping transcoding worker');
       }
    }
 
@@ -81,9 +82,9 @@ export class TranscodingWorker {
             await this.processTranscodingJob(jobData, message);
          });
 
-         console.log(`Started consuming ${queueName} priority transcoding jobs`);
+         logger.info({ queueName }, 'Started consuming priority transcoding jobs');
       } catch (error: any) {
-         console.error(`Error starting consumer for ${queueName} queue:`, error);
+         logger.error({ err: error, queueName }, 'Error starting consumer for queue');
       }
    }
 
@@ -101,7 +102,7 @@ export class TranscodingWorker {
 
       const { id, filePath } = chapter;
 
-      console.log(`Processing transcoding job for chapter ${id}, bitrates: ${bitrates.join(',')}, priority: ${priority}`);
+      logger.info({ chapterId: id, bitrates: bitrates.join(','), priority }, 'Processing transcoding job for chapter');
 
       try {
          if (!chapter.id) {
@@ -122,7 +123,7 @@ export class TranscodingWorker {
          const remainingBitrates = bitrates.filter(bitrate => !existingBitrates.includes(bitrate));
 
          if (remainingBitrates.length === 0) {
-            console.log(`Chapter ${chapter.id} already transcoded for all requested bitrates`);
+            logger.info({ chapterId: chapter.id }, 'Chapter already transcoded for all requested bitrates');
             return;
          }
 
@@ -153,9 +154,9 @@ export class TranscodingWorker {
                }, priority);
 
                bitrateJobs.push(job);
-               console.log(`Created Bull job for bitrate ${bitrate}k: ${job.id}`);
+               logger.info({ chapterId: chapter.id, bitrate, jobId: job.id }, 'Created Bull job for bitrate');
             } catch (error: any) {
-               console.error(`Failed to create Bull job for bitrate ${bitrate}k:`, error);
+               logger.error({ err: error, chapterId: chapter.id, bitrate }, 'Failed to create Bull job for bitrate');
                // Continue with other bitrates
             }
          }
@@ -169,20 +170,20 @@ export class TranscodingWorker {
                   variantBitrates: remainingBitrates
                }, priority);
 
-               console.log(`Created master playlist Bull job: ${masterJob.id}`);
+               logger.info({ chapterId: chapter.id, jobId: masterJob.id }, 'Created master playlist Bull job');
             } catch (error: any) {
-               console.error('Failed to create master playlist Bull job:', error);
+               logger.error({ err: error, chapterId: chapter.id }, 'Failed to create master playlist Bull job');
             }
          }
 
-         console.log(`Successfully dispatched ${bitrateJobs.length} bitrate jobs and 1 master job for chapter ${chapter.id}`);
+         logger.info({ chapterId: chapter.id, bitrateJobCount: bitrateJobs.length }, 'Successfully dispatched bitrate jobs and master job for chapter');
 
       } catch (error: any) {
-         console.error(`Transcoding job failed for chapter ${chapter.id}:`, error);
+         logger.error({ err: error, chapterId: chapter.id }, 'Transcoding job failed for chapter');
 
          // Handle retry logic
          if (retryCount < 3) {
-            console.log(`Retrying transcoding job for chapter ${chapter.id} (attempt ${retryCount + 1})`);
+            logger.info({ chapterId: chapter.id, attempt: retryCount + 1 }, 'Retrying transcoding job for chapter');
 
             // Publish job back to queue with increased retry count
             const retryJobData: TranscodingJobData = {
@@ -193,7 +194,7 @@ export class TranscodingWorker {
 
             await this.publishTranscodingJob(retryJobData, 'low');
          } else {
-            console.error(`Max retries reached for chapter ${chapter.id}, marking as failed`);
+            logger.error({ chapterId: chapter.id }, 'Max retries reached for chapter, marking as failed');
          }
 
          // Update job status in database
@@ -209,7 +210,7 @@ export class TranscodingWorker {
          const rabbitMQ = RabbitMQFactory.getConnection();
          await rabbitMQ.publishTranscodingJob(jobData, priority);
       } catch (error: any) {
-         console.error('Error publishing transcoding job:', error);
+         logger.error({ err: error }, 'Error publishing transcoding job');
       }
    }
 
@@ -256,7 +257,7 @@ export class TranscodingWorker {
             });
          }
       } catch (error: any) {
-         console.error('Error updating transcoding job status:', error);
+         logger.error({ err: error }, 'Error updating transcoding job status');
       }
    }
 
@@ -291,7 +292,7 @@ export class TranscodingWorker {
             recentJobs
          };
       } catch (error: any) {
-         console.error('Error getting worker stats:', error);
+         logger.error({ err: error }, 'Error getting worker stats');
          return {
             isRunning: this.isRunning,
             queueStats: {},
@@ -315,15 +316,15 @@ export class TranscodingWorker {
          // Test database connection
          await this.prisma.$queryRaw`SELECT 1`;
 
-         console.log('Worker test results:', {
+         logger.info({
             rabbitMQConnected: isConnected,
             bullQueuesReady: bullReady,
             databaseConnected: true
-         });
+         }, 'Worker test results');
 
          return isConnected && bullReady;
       } catch (error: any) {
-         console.error('Worker test failed:', error);
+         logger.error({ err: error }, 'Worker test failed');
          return false;
       }
    }

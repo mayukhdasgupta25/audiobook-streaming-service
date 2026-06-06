@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { logger } from '../config/logger';
 
 /**
  * Error handling utilities
@@ -19,7 +20,7 @@ export class ErrorHandler {
     * Global error handler
     */
    static handleError = (err: Error, req: Request, res: Response, _next: any): void => {
-      console.error('Error:', err);
+      logger.error({ err: err }, 'Error');
 
       // Default error response
       let statusCode = 500;

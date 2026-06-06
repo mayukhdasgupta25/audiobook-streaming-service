@@ -13,6 +13,7 @@ import {
    MasterPlaylistJobData,
    DEFAULT_JOB_OPTIONS
 } from '../config/bull';
+import { bullLogger } from '../config/logger';
 
 export class BullQueueManager {
    private static instance: BullQueueManager;
@@ -24,9 +25,6 @@ export class BullQueueManager {
       this.prisma = prisma;
    }
 
-   /**
-    * Get singleton instance
-    */
    public static getInstance(prisma: PrismaClient): BullQueueManager {
       if (!BullQueueManager.instance) {
          BullQueueManager.instance = new BullQueueManager(prisma);
@@ -34,63 +32,82 @@ export class BullQueueManager {
       return BullQueueManager.instance;
    }
 
-   /**
-    * Initialize all queues
-    */
    public async initialize(): Promise<void> {
       if (this.isInitialized) {
          return;
       }
 
       try {
-         console.log('Initializing Bull queues...');
+         bullLogger.info('Initializing Bull queues...');
 
-         // Create all queues
          for (const queueName of getAllQueueNames()) {
             const queue = createQueue(queueName);
             this.queues.set(queueName, queue);
-
-            // Set up queue event listeners
             this.setupQueueEventListeners(queue, queueName);
-
-            console.log(`Created queue: ${queueName}`);
+            bullLogger.info({ queueName }, 'Queue created successfully');
          }
 
          this.isInitialized = true;
-         console.log('All Bull queues initialized successfully');
+         bullLogger.info('All Bull queues initialized successfully');
       } catch (error: any) {
-         console.error('Error initializing Bull queues:', error);
+         bullLogger.error({ err: error }, 'Error initializing Bull queues');
          throw error;
       }
    }
 
-   /**
-    * Set up event listeners for a queue
-    */
    private setupQueueEventListeners(queue: Bull.Queue, queueName: string): void {
-      queue.on('completed', async (job: Bull.Job) => {
-         console.log(`Job ${job.id} completed in queue ${queueName}`);
-         await this.updateJobStatus(job.data.chapterId, 'completed', 100);
+      queue.on('ready', () => {
+         bullLogger.info({ queueName }, 'Queue is ready');
       });
 
-      queue.on('failed', async (job: Bull.Job, error: Error) => {
-         console.error(`Job ${job.id} failed in queue ${queueName}:`, error);
-         await this.updateJobStatus(job.data.chapterId, 'failed', 0, error.message);
+      queue.on('error', (error) => {
+         bullLogger.error({ err: error, queueName }, 'Queue error');
       });
 
-      queue.on('progress', async (job: Bull.Job, progress: number) => {
-         console.log(`Job ${job.id} progress in queue ${queueName}: ${progress}%`);
+      queue.on('waiting', (jobId) => {
+         bullLogger.debug({ jobId, queueName }, 'Job is waiting in queue');
+      });
+
+      queue.on('active', (job) => {
+         bullLogger.info({ jobId: job.id, queueName }, 'Job is active in queue');
+      });
+
+      queue.on('stalled', (job) => {
+         bullLogger.warn({ jobId: job.id, queueName }, 'Job is stalled in queue');
+      });
+
+      queue.on('progress', async (job, progress) => {
+         bullLogger.debug({ jobId: job.id, progress, queueName }, 'Job progress');
          await this.updateJobStatus(job.data.chapterId, 'processing', progress);
       });
 
-      queue.on('stalled', (job: Bull.Job) => {
-         console.warn(`Job ${job.id} stalled in queue ${queueName}`);
+      queue.on('completed', async (job) => {
+         bullLogger.info({ jobId: job.id, queueName }, 'Job completed in queue');
+         await this.updateJobStatus(job.data.chapterId, 'completed', 100);
+      });
+
+      queue.on('failed', async (job, err) => {
+         bullLogger.error({ err, jobId: job.id, queueName }, 'Job failed in queue');
+         await this.updateJobStatus(job.data.chapterId, 'failed', 0, err.message);
+      });
+
+      queue.on('paused', () => {
+         bullLogger.info({ queueName }, 'Queue is paused');
+      });
+
+      queue.on('resumed', () => {
+         bullLogger.info({ queueName }, 'Queue is resumed');
+      });
+
+      queue.on('cleaned', (jobs, type) => {
+         bullLogger.info({ count: jobs.length, type, queueName }, 'Cleaned jobs from queue');
+      });
+
+      queue.on('drained', () => {
+         bullLogger.info({ queueName }, 'Queue is drained');
       });
    }
 
-   /**
-    * Add bitrate transcoding job
-    */
    public async addBitrateTranscodingJob(
       data: BitrateTranscodingJobData,
       priority: 'low' | 'normal' | 'high' = 'normal'
@@ -109,14 +126,11 @@ export class BullQueueManager {
       };
 
       const job = await queue.add(data, jobOptions);
-      console.log(`Added bitrate transcoding job for chapter ${data.chapterId}, bitrate ${data.bitrate}k`);
+      bullLogger.info({ chapterId: data.chapterId, bitrate: data.bitrate, queueName }, 'Added bitrate transcoding job');
 
       return job;
    }
 
-   /**
-    * Add master playlist generation job
-    */
    public async addMasterPlaylistJob(
       data: MasterPlaylistJobData,
       priority: 'low' | 'normal' | 'high' = 'normal'
@@ -131,32 +145,23 @@ export class BullQueueManager {
          ...DEFAULT_JOB_OPTIONS,
          priority: priority === 'high' ? 10 : priority === 'normal' ? 5 : 1,
          jobId: `${data.chapterId}-master-${Date.now()}`,
-         delay: 5000 // Delay 5 seconds to allow bitrate jobs to start
+         delay: 5000
       };
 
       const job = await queue.add(data, jobOptions);
-      console.log(`Added master playlist job for chapter ${data.chapterId}`);
+      bullLogger.info({ chapterId: data.chapterId, queueName: QUEUE_NAMES.MASTER_PLAYLIST }, 'Added master playlist job');
 
       return job;
    }
 
-   /**
-    * Get queue by name
-    */
    public getQueue(queueName: string): Bull.Queue | undefined {
       return this.queues.get(queueName);
    }
 
-   /**
-    * Get all queues
-    */
    public getAllQueues(): Map<string, Bull.Queue> {
       return this.queues;
    }
 
-   /**
-    * Get queue statistics
-    */
    public async getQueueStats(): Promise<{
       [queueName: string]: {
          waiting: number;
@@ -166,7 +171,13 @@ export class BullQueueManager {
          delayed: number;
       };
    }> {
-      const stats: any = {};
+      const stats: Record<string, {
+         waiting: number;
+         active: number;
+         completed: number;
+         failed: number;
+         delayed: number;
+      }> = {};
 
       for (const [queueName, queue] of this.queues) {
          const counts = await queue.getJobCounts();
@@ -182,9 +193,6 @@ export class BullQueueManager {
       return stats;
    }
 
-   /**
-    * Get job by ID
-    */
    public async getJob(queueName: string, jobId: string): Promise<Bull.Job | null> {
       const queue = this.queues.get(queueName);
       if (!queue) {
@@ -193,9 +201,6 @@ export class BullQueueManager {
       return await queue.getJob(jobId);
    }
 
-   /**
-    * Retry failed job
-    */
    public async retryJob(queueName: string, jobId: string): Promise<void> {
       const queue = this.queues.get(queueName);
       if (!queue) {
@@ -208,12 +213,9 @@ export class BullQueueManager {
       }
 
       await job.retry();
-      console.log(`Retried job ${jobId} in queue ${queueName}`);
+      bullLogger.info({ jobId, queueName }, 'Retried job in queue');
    }
 
-   /**
-    * Clean up old jobs
-    */
    public async cleanupOldJobs(queueName: string, maxAge: number = 24 * 60 * 60 * 1000): Promise<void> {
       const queue = this.queues.get(queueName);
       if (!queue) {
@@ -222,12 +224,9 @@ export class BullQueueManager {
 
       await queue.clean(maxAge, 'completed');
       await queue.clean(maxAge, 'failed');
-      console.log(`Cleaned up old jobs in queue ${queueName}`);
+      bullLogger.info({ queueName }, 'Cleaned up old jobs in queue');
    }
 
-   /**
-    * Update job status in database
-    */
    private async updateJobStatus(
       chapterId: string,
       status: string,
@@ -235,7 +234,6 @@ export class BullQueueManager {
       errorMessage?: string
    ): Promise<void> {
       try {
-         // Find the most recent job for this chapter
          const existingJob = await this.prisma.transcodingJob.findFirst({
             where: { chapterId },
             orderBy: { createdAt: 'desc' }
@@ -255,27 +253,21 @@ export class BullQueueManager {
             });
          }
       } catch (error: any) {
-         console.error('Error updating job status:', error);
+         bullLogger.error({ err: error, chapterId }, 'Error updating job status');
       }
    }
 
-   /**
-    * Gracefully close all queues
-    */
    public async close(): Promise<void> {
-      console.log('Closing Bull queues...');
+      bullLogger.info('Closing Bull queues...');
 
       const closePromises = Array.from(this.queues.values()).map(queue => queue.close());
       await Promise.all(closePromises);
 
       this.queues.clear();
       this.isInitialized = false;
-      console.log('All Bull queues closed');
+      bullLogger.info('All Bull queues closed');
    }
 
-   /**
-    * Check if manager is initialized
-    */
    public isReady(): boolean {
       return this.isInitialized;
    }

@@ -2,6 +2,7 @@
  * Internationalization Messages
  * Message catalog with support for multiple locales
  */
+import { logger } from '../config/logger';
 
 export interface MessageParams {
    [key: string]: string | number | boolean;
@@ -88,7 +89,7 @@ export function getMessage(
    const categoryMessages = catalog[category];
 
    if (!categoryMessages || !(key in categoryMessages)) {
-      console.warn(`Message not found: ${category}.${key} for locale ${locale}`);
+      logger.warn({ category, key, locale }, 'Message not found');
       return `${category}.${key}`;
    }
 
@@ -163,7 +164,7 @@ export function setDefaultLocale(locale: string): void {
    if (isLocaleSupported(locale)) {
       defaultLocale = locale;
    } else {
-      console.warn(`Locale ${locale} is not supported. Using default locale: ${defaultLocale}`);
+      logger.warn({ locale, defaultLocale }, 'Locale is not supported, using default locale');
    }
 }
 
