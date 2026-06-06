@@ -1,7 +1,6 @@
 import amqp from 'amqplib';
 import { config } from './env';
-
-
+import { rabbitmqLogger } from './logger';
 export interface TranscodingJobData {
    // Chapter object (nested)
    chapter: {
@@ -67,16 +66,16 @@ export class RabbitMQConnection {
       this.isConnecting = true;
 
       try {
-         console.log('Connecting to RabbitMQ...');
+         rabbitmqLogger.info('Connecting to RabbitMQ...');
          this.connection = await amqp.connect(config.RABBITMQ_URL) as unknown as amqp.Connection;
 
          this.connection!.on('error', (error: Error) => {
-            console.error('RabbitMQ connection error:', error);
+            rabbitmqLogger.error({ err: error }, 'RabbitMQ connection error');
             this.handleConnectionError();
          });
 
          this.connection!.on('close', () => {
-            console.log('RabbitMQ connection closed');
+            rabbitmqLogger.warn('RabbitMQ connection closed');
             this.handleConnectionError();
          });
 
@@ -85,7 +84,7 @@ export class RabbitMQConnection {
          // Set prefetch to prevent overwhelming workers
          await this.channel!.prefetch(1);
 
-         console.log('Connected to RabbitMQ successfully');
+         rabbitmqLogger.info('Connected to RabbitMQ successfully');
          this.reconnectAttempts = 0;
          this.isConnecting = false;
 
@@ -93,7 +92,7 @@ export class RabbitMQConnection {
          await this.setupExchangesAndQueues();
 
       } catch (error) {
-         console.error('Failed to connect to RabbitMQ:', error);
+         rabbitmqLogger.error({ err: error }, 'Failed to connect to RabbitMQ');
          this.isConnecting = false;
          await this.handleConnectionError();
          throw error;
@@ -134,9 +133,9 @@ export class RabbitMQConnection {
          await this.channel.bindQueue('audiobook.transcode.normal', 'transcoding.exchange', 'normal');
          await this.channel.bindQueue('audiobook.transcode.low', 'transcoding.exchange', 'low');
 
-         console.log('RabbitMQ exchanges and queues setup completed');
+         rabbitmqLogger.info('RabbitMQ exchanges and queues setup completed');
       } catch (error: any) {
-         console.error('Error setting up exchanges and queues:', error);
+         rabbitmqLogger.error({ err: error }, 'Error setting up exchanges and queues');
          throw error;
       }
    }
@@ -178,22 +177,22 @@ export class RabbitMQConnection {
 
       try {
          await this.channel.assertQueue(queueName, configWithTTL);
-         console.log(`Successfully connected to queue ${queueName} with TTL ${ttl}`);
+         rabbitmqLogger.info({ queueName, ttl }, 'Successfully connected to queue with TTL');
       } catch (error: any) {
-         // If TTL configuration fails (queue already exists with different TTL), try without TTL
          if (error.code === 406) {
-            console.warn(
-               `Queue ${queueName} already exists with different TTL. Attempting to connect without TTL configuration...`
+            rabbitmqLogger.warn(
+               { queueName },
+               'Queue already exists with different TTL; attempting to connect without TTL configuration'
             );
             try {
                await this.channel.assertQueue(queueName, configWithoutTTL);
-               console.log(`Successfully connected to existing queue ${queueName} (using existing TTL configuration)`);
+               rabbitmqLogger.info({ queueName }, 'Successfully connected to existing queue using existing TTL configuration');
             } catch (fallbackError: any) {
-               console.error(`Failed to connect to queue ${queueName} even without TTL:`, fallbackError);
+               rabbitmqLogger.error({ err: fallbackError, queueName }, 'Failed to connect to queue even without TTL');
                throw fallbackError;
             }
          } else {
-            console.error(`Failed to connect to queue ${queueName}:`, error);
+            rabbitmqLogger.error({ err: error, queueName }, 'Failed to connect to queue');
             throw error;
          }
       }
@@ -232,14 +231,14 @@ export class RabbitMQConnection {
          );
 
          if (published) {
-            console.log(`Transcoding job published for chapter ${jobData.chapter.id} with priority ${priority}`);
+            rabbitmqLogger.info({ chapterId: jobData.chapter.id, priority }, 'Transcoding job published');
             return true;
          } else {
-            console.error('Failed to publish transcoding job - channel buffer full');
+            rabbitmqLogger.error('Failed to publish transcoding job - channel buffer full');
             return false;
          }
       } catch (error) {
-         console.error('Error publishing transcoding job:', error);
+         rabbitmqLogger.error({ err: error }, 'Error publishing transcoding job');
          return false;
       }
    }
@@ -265,14 +264,14 @@ export class RabbitMQConnection {
 
             try {
                const jobData: TranscodingJobData = JSON.parse(message.content.toString());
-               console.log(`Processing transcoding job for chapter ${jobData.chapter.id}`);
+               rabbitmqLogger.info({ chapterId: jobData.chapter.id }, 'Processing transcoding job');
 
                await callback(jobData, message);
 
                // Acknowledge the message
                this.channel!.ack(message);
             } catch (error) {
-               console.error('Error processing transcoding job:', error);
+               rabbitmqLogger.error({ err: error }, 'Error processing transcoding job');
 
                // Reject and requeue the message
                this.channel!.nack(message, false, true);
@@ -281,9 +280,9 @@ export class RabbitMQConnection {
             noAck: false
          });
 
-         console.log(`Started consuming transcoding jobs from ${fullQueueName}`);
+         rabbitmqLogger.info({ queueName: fullQueueName }, 'Started consuming transcoding jobs');
       } catch (error) {
-         console.error(`Error setting up consumer for ${fullQueueName}:`, error);
+         rabbitmqLogger.error({ err: error, queueName: fullQueueName }, 'Error setting up transcoding consumer');
          throw error;
       }
    }
@@ -308,14 +307,14 @@ export class RabbitMQConnection {
 
             try {
                const data: T = JSON.parse(message.content.toString());
-               console.log(`Processing message from queue ${queueName}`);
+               rabbitmqLogger.info({ queueName }, 'Processing message from queue');
 
                await callback(data, message);
 
                // Acknowledge the message after successful processing
                this.channel!.ack(message);
             } catch (error) {
-               console.error(`Error processing message from queue ${queueName}:`, error);
+               rabbitmqLogger.error({ err: error, queueName }, 'Error processing message from queue');
 
                // Reject and requeue the message on error
                this.channel!.nack(message, false, true);
@@ -324,9 +323,9 @@ export class RabbitMQConnection {
             noAck: false
          });
 
-         console.log(`Started consuming messages from ${queueName}`);
+         rabbitmqLogger.info({ queueName }, 'Started consuming messages from queue');
       } catch (error) {
-         console.error(`Error setting up consumer for ${queueName}:`, error);
+         rabbitmqLogger.error({ err: error, queueName }, 'Error setting up consumer');
          throw error;
       }
    }
@@ -355,7 +354,7 @@ export class RabbitMQConnection {
                consumerCount: queueInfo.consumerCount
             };
          } catch (error) {
-            console.error(`Error getting stats for queue ${queue}:`, error);
+            rabbitmqLogger.error({ err: error, queue }, 'Error getting stats for queue');
             stats[queue] = {
                messageCount: 0,
                consumerCount: 0
@@ -374,20 +373,24 @@ export class RabbitMQConnection {
       this.channel = null;
 
       if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-         console.error('Max reconnection attempts reached. Stopping reconnection attempts.');
+         rabbitmqLogger.error('Max reconnection attempts reached; stopping reconnection attempts');
          return;
       }
 
       this.reconnectAttempts++;
       const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1); // Exponential backoff
 
-      console.log(`Attempting to reconnect to RabbitMQ in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+      rabbitmqLogger.warn({
+         delay,
+         attempt: this.reconnectAttempts,
+         maxAttempts: this.maxReconnectAttempts,
+      }, 'Attempting to reconnect to RabbitMQ');
 
       setTimeout(async () => {
          try {
             await this.connect();
          } catch (error) {
-            console.error('Reconnection attempt failed:', error);
+            rabbitmqLogger.error({ err: error }, 'Reconnection attempt failed');
          }
       }, delay);
    }
@@ -407,9 +410,9 @@ export class RabbitMQConnection {
             this.connection = null;
          }
 
-         console.log('RabbitMQ connection closed gracefully');
+         rabbitmqLogger.info('RabbitMQ connection closed gracefully');
       } catch (error) {
-         console.error('Error closing RabbitMQ connection:', error);
+         rabbitmqLogger.error({ err: error }, 'Error closing RabbitMQ connection');
       }
    }
 

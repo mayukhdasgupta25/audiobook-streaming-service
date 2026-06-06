@@ -9,6 +9,7 @@ import { TranscodingService } from '../services/TranscodingService';
 import { ErrorHandler } from '../middleware/ErrorHandler';
 import { ResponseHandler } from '../utils/ResponseHandler';
 import { MessageHandler } from '../utils/MessageHandler';
+import { logger } from '../config/logger';
 
 export class StreamingController {
    private prisma: PrismaClient;
@@ -436,7 +437,7 @@ export class StreamingController {
             await this.prisma.$queryRaw`SELECT 1`;
             healthStatus.components.database = true;
          } catch (error) {
-            console.error('Database health check failed:', error);
+            logger.error({ err: error }, 'Database health check failed');
          }
 
          // Test Redis connection
@@ -444,7 +445,7 @@ export class StreamingController {
             const redis = require('../config/redis').RedisConnection.getInstance();
             healthStatus.components.redis = await redis.testConnection();
          } catch (error) {
-            console.error('Redis health check failed:', error);
+            logger.error({ err: error }, 'Redis health check failed');
          }
 
          // Test storage provider
@@ -452,14 +453,14 @@ export class StreamingController {
             const storageProvider = require('../services/storage/StorageFactory').StorageFactory.getStorageProvider();
             healthStatus.components.storage = await storageProvider.testConnection();
          } catch (error) {
-            console.error('Storage health check failed:', error);
+            logger.error({ err: error }, 'Storage health check failed');
          }
 
          // Test FFmpeg
          try {
             healthStatus.components.ffmpeg = await this.transcodingService.testFFmpegInstallation();
          } catch (error) {
-            console.error('FFmpeg health check failed:', error);
+            logger.error({ err: error }, 'FFmpeg health check failed');
          }
 
          // Determine overall status
@@ -470,7 +471,7 @@ export class StreamingController {
          res.status(statusCode).json(healthStatus);
 
       } catch (error: any) {
-         console.error('Health check failed:', error);
+         logger.error({ err: error }, 'Health check failed');
          res.status(500).json({
             status: 'unhealthy',
             error: error.message

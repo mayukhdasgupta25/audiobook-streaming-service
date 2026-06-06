@@ -10,6 +10,7 @@ import { StorageFactory } from './storage/StorageFactory';
 import { config } from '../config/env';
 import { toStorageKey } from '../utils/storageKeys';
 import { PrismaClient } from '@prisma/client';
+import { logger } from '../config/logger';
 
 export interface TranscodingOptions {
    inputPath: string;
@@ -76,10 +77,10 @@ export class TranscodingService {
          // Check if file exists locally
          try {
             await fs.access(fullPath);
-            console.log(`File already exists at: ${fullPath}`);
+            logger.info({ fullPath }, 'File already exists at path');
          } catch {
             // File doesn't exist locally, try to get it from storage provider
-            console.log(`File not found locally, downloading from storage: ${filePath}`);
+            logger.info({ filePath }, 'File not found locally, downloading from storage');
             const fileExists = await this.storageProvider!.fileExists(toStorageKey(filePath));
 
             if (!fileExists) {
@@ -88,7 +89,7 @@ export class TranscodingService {
 
             const fileContent = await this.storageProvider!.downloadFile(toStorageKey(filePath));
             await fs.writeFile(fullPath, fileContent);
-            console.log(`File downloaded and saved to: ${fullPath}`);
+            logger.info({ fullPath }, 'File downloaded and saved to path');
          }
       } else {
          // For production/other environments, verify file exists in storage (S3)
@@ -98,7 +99,7 @@ export class TranscodingService {
             throw new Error(`Input file not found in storage at path: ${filePath}`);
          }
 
-         console.log(`File verified in storage: ${filePath}`);
+         logger.info({ filePath }, 'File verified in storage');
       }
    }
 
@@ -128,7 +129,7 @@ export class TranscodingService {
          // Transcode to each bitrate
          for (const bitrate of bitrates) {
             try {
-               console.log(`Starting transcoding for bitrate ${bitrate}k for chapter ${id}`);
+               logger.info({ bitrate, chapterId: id }, 'Starting transcoding for bitrate for chapter');
 
                const result = await this.transcodeToBitrate({
                   inputPath: tempInputPath,
@@ -140,18 +141,17 @@ export class TranscodingService {
                });
 
                variantPlaylists.push(result);
-               console.log(`Successfully completed transcoding for bitrate ${bitrate}k`);
+               logger.info({ bitrate }, 'Successfully completed transcoding for bitrate');
 
                // Update database with transcoded chapter info
                await this.updateTranscodedChapter(id, bitrate, result);
 
             } catch (error: any) {
-               console.error(`Failed to transcode bitrate ${bitrate}k for chapter ${id}:`, {
-                  error: error.message,
-                  stack: error.stack,
+               logger.error({
+                  err: error,
                   bitrate,
                   chapterId: id
-               });
+               }, 'Failed to transcode bitrate for chapter');
 
                // Update database with error
                await this.updateTranscodingJob(id, bitrate, 'failed', 0, error.message);
@@ -181,7 +181,7 @@ export class TranscodingService {
          };
 
       } catch (error: any) {
-         console.error('Transcoding failed:', error);
+         logger.error({ err: error }, 'Transcoding failed');
          throw new Error(`Transcoding failed: ${error.message}`);
       }
    }
@@ -214,7 +214,7 @@ export class TranscodingService {
          // Create output directory structure
          await this.ensureOutputDirectory(outputDir);
 
-         console.log(`Starting single bitrate transcoding for bitrate ${bitrate}k for chapter ${id}`);
+         logger.info({ bitrate, chapterId: id }, 'Starting single bitrate transcoding for chapter');
 
          // Transcode to specific bitrate
          const result = await this.transcodeToBitrate({
@@ -226,7 +226,7 @@ export class TranscodingService {
             ...(userId && { userId })
          });
 
-         console.log(`Successfully completed single bitrate transcoding for bitrate ${bitrate}k`);
+         logger.info({ bitrate }, 'Successfully completed single bitrate transcoding for bitrate');
 
          // Clean up temporary input file
          await this.cleanupTempFiles(tempInputPath);
@@ -234,7 +234,7 @@ export class TranscodingService {
          return result;
 
       } catch (error: any) {
-         console.error(`Single bitrate transcoding failed for bitrate ${bitrate}k:`, error);
+         logger.error({ err: error, bitrate }, 'Single bitrate transcoding failed for bitrate');
          throw new Error(`Single bitrate transcoding failed: ${error.message}`);
       }
    }
@@ -296,7 +296,7 @@ export class TranscodingService {
 
          command
             .on('start', (commandLine: string) => {
-               console.log(`Starting transcoding for bitrate ${bitrate}: ${commandLine}`);
+               logger.info({ bitrate, commandLine }, 'Starting transcoding for bitrate');
             })
             .on('progress', (progressInfo: any) => {
                if (progressInfo.percent) {
@@ -306,7 +306,7 @@ export class TranscodingService {
             })
             .on('end', async () => {
                try {
-                  console.log(`Transcoding completed for bitrate ${bitrate}`);
+                  logger.info({ bitrate }, 'Transcoding completed for bitrate');
 
                   // Move unique temporary init file from bitrate directory or root to final location
                   await this.moveTempInitFileToBitrateDir(bitrateTempInitPath, rootTempInitPath, targetInitPath, bitrate);
@@ -373,12 +373,12 @@ export class TranscodingService {
                   });
 
                } catch (error: any) {
-                  console.error(`Error processing transcoded files for bitrate ${bitrate}:`, error);
+                  logger.error({ err: error, bitrate }, 'Error processing transcoded files for bitrate');
                   reject(error);
                }
             })
             .on('error', async (error: Error) => {
-               console.error(`Transcoding error for bitrate ${bitrate}:`, error);
+               logger.error({ err: error, bitrate }, 'Transcoding error for bitrate');
                await this.updateTranscodingJob(id, bitrate, 'failed', progress, error.message);
                reject(error);
             });
@@ -407,7 +407,7 @@ export class TranscodingService {
          if (config.STORAGE_PROVIDER === 'local') {
             const playlistPath = path.join(bitrateDir, 'playlist.m3u8');
             await fs.writeFile(playlistPath, playlistContent, 'utf-8');
-            console.log(`Files stored locally in: ${bitrateDir}`);
+            logger.info({ bitrateDir }, 'Files stored locally in directory');
             return;
          }
 
@@ -462,7 +462,7 @@ export class TranscodingService {
          await this.cleanupLocalTranscodedFiles(bitrateDir);
 
       } catch (error: any) {
-         console.error('Error uploading transcoded files:', error);
+         logger.error({ err: error }, 'Error uploading transcoded files');
          throw error;
       }
    }
@@ -526,7 +526,7 @@ export class TranscodingService {
             await fs.access(bitrateTempInitPath);
             // Rename temp file to init.mp4 in the bitrate directory
             await fs.rename(bitrateTempInitPath, targetInitPath);
-            console.log(`Renamed init_${bitrate}k_temp.mp4 to init.mp4 in ${bitrateDir}`);
+            logger.info({ bitrateDir, bitrate }, 'Renamed temp init file to init.mp4 in bitrate directory');
             return;
          } catch (error: any) {
             // Temp init file doesn't exist in bitrate directory
@@ -540,7 +540,7 @@ export class TranscodingService {
             await fs.access(rootTempInitPath);
             // Move temp init file from root to bitrate directory and rename to init.mp4
             await fs.rename(rootTempInitPath, targetInitPath);
-            console.log(`Moved init_${bitrate}k_temp.mp4 from root to ${bitrateDir}/init.mp4`);
+            logger.info({ bitrateDir, bitrate }, 'Moved temp init file from root to bitrate directory');
             return;
          } catch (error: any) {
             // Temp init file doesn't exist in root either
@@ -552,13 +552,13 @@ export class TranscodingService {
          // Check if init.mp4 already exists in the correct location
          try {
             await fs.access(targetInitPath);
-            console.log(`init.mp4 already exists in ${bitrateDir}`);
+            logger.info({ bitrateDir }, 'init.mp4 already exists in bitrate directory');
          } catch {
             // init.mp4 doesn't exist, which might be an issue
-            console.warn(`init.mp4 not found for bitrate ${bitrate}k in ${bitrateDir}`);
+            logger.warn({ bitrate, bitrateDir }, 'init.mp4 not found for bitrate in directory');
          }
       } catch (error: any) {
-         console.error(`Error moving temp init file for bitrate ${bitrate}k:`, error);
+         logger.error({ err: error, bitrate }, 'Error moving temp init file for bitrate');
          // Don't throw error, as this is a cleanup operation
       }
    }
@@ -582,7 +582,7 @@ export class TranscodingService {
 
             // Move init.mp4 from root to bitrate directory
             await fs.rename(rootInitPath, targetInitPath);
-            console.log(`Moved init.mp4 from root to ${bitrateDir}`);
+            logger.info({ bitrateDir }, 'Moved init.mp4 from root to bitrate directory');
          } catch (error: any) {
             // init.mp4 doesn't exist in root, check if it already exists in bitrate directory
             if (error.code !== 'ENOENT') {
@@ -592,14 +592,14 @@ export class TranscodingService {
             // Check if init.mp4 already exists in the correct location
             try {
                await fs.access(targetInitPath);
-               console.log(`init.mp4 already exists in ${bitrateDir}`);
+               logger.info({ bitrateDir }, 'init.mp4 already exists in bitrate directory');
             } catch {
                // init.mp4 doesn't exist in either location, which is fine
-               console.log(`init.mp4 not found in root or bitrate directory for ${bitrateDir}`);
+               logger.info({ bitrateDir }, 'init.mp4 not found in root or bitrate directory');
             }
          }
       } catch (error: any) {
-         console.error(`Error moving init.mp4 to bitrate directory:`, error);
+         logger.error({ err: error }, 'Error moving init.mp4 to bitrate directory');
          // Don't throw error, as this is a cleanup operation
       }
    }
@@ -625,7 +625,7 @@ export class TranscodingService {
 
          return tempPath;
       } catch (error: any) {
-         console.error('Error downloading file to temp:', error);
+         logger.error({ err: error }, 'Error downloading file to temp');
          throw error;
       }
    }
@@ -646,9 +646,9 @@ export class TranscodingService {
          // Remove the empty bitrate directory
          await fs.rmdir(bitrateDir);
 
-         console.log(`Cleaned up local transcoded files from: ${bitrateDir}`);
+         logger.info({ bitrateDir }, 'Cleaned up local transcoded files from directory');
       } catch (error: any) {
-         console.error('Error cleaning up local transcoded files:', error);
+         logger.error({ err: error }, 'Error cleaning up local transcoded files');
          // Don't throw error as this is cleanup - transcoding was successful
       }
    }
@@ -665,15 +665,15 @@ export class TranscodingService {
             const files = await fs.readdir(tempDir);
             if (files.length === 0) {
                await fs.rmdir(tempDir);
-               console.log(`Cleaned up empty temp directory: ${tempDir}`);
+               logger.info({ tempDir }, 'Cleaned up empty temp directory');
             }
          } catch (error: any) {
-            console.log(`Could not remove temp directory ${tempDir}:`, error.message);
+            logger.info({ tempDir, err: error, message: error.message }, 'Could not remove temp directory');
          }
 
-         console.log(`Cleaned up temp file: ${tempPath}`);
+         logger.info({ tempPath }, 'Cleaned up temp file');
       } catch (error: any) {
-         console.error('Error cleaning up temp files:', error);
+         logger.error({ err: error }, 'Error cleaning up temp files');
       }
    }
 
@@ -685,7 +685,7 @@ export class TranscodingService {
          const fullPath = path.join(process.cwd(), config.LOCAL_STORAGE_PATH, outputDir);
          await fs.mkdir(fullPath, { recursive: true });
       } catch (error: any) {
-         console.error('Error creating output directory:', error);
+         logger.error({ err: error }, 'Error creating output directory');
          throw error;
       }
    }
@@ -725,7 +725,7 @@ export class TranscodingService {
             }
          });
       } catch (error: any) {
-         console.error('Error updating transcoded chapter:', error);
+         logger.error({ err: error }, 'Error updating transcoded chapter');
          throw error;
       }
    }
@@ -774,7 +774,7 @@ export class TranscodingService {
             });
          }
       } catch (error: any) {
-         console.error('Error updating transcoding job:', error);
+         logger.error({ err: error }, 'Error updating transcoding job');
       }
    }
 
@@ -832,7 +832,7 @@ export class TranscodingService {
             overallStatus
          };
       } catch (error: any) {
-         console.error('Error getting transcoding status:', error);
+         logger.error({ err: error }, 'Error getting transcoding status');
          throw error;
       }
    }
@@ -844,10 +844,10 @@ export class TranscodingService {
       return new Promise((resolve) => {
          ffmpeg.getAvailableFormats((err: any, _formats: any) => {
             if (err) {
-               console.error('FFmpeg test failed:', err);
+               logger.error({ err }, 'FFmpeg test failed');
                resolve(false);
             } else {
-               console.log('FFmpeg is available');
+               logger.info('FFmpeg is available');
                resolve(true);
             }
          });

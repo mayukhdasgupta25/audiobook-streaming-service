@@ -13,6 +13,7 @@ import {
    MessageParams,
    MessageCatalog
 } from '../i18n/messages';
+import { logger } from '../config/logger';
 
 /**
  * Message Handler class for retrieving localized messages
@@ -221,7 +222,7 @@ export class MessageHandler {
       try {
          return this.getMessage(category, key, params, locale);
       } catch (error) {
-         console.warn(`Failed to get message ${category}.${key}:`, error);
+         logger.warn({ err: error, category, key }, 'Failed to get message');
          return this.formatMessage(fallback, params || {});
       }
    }

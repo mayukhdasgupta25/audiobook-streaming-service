@@ -6,6 +6,7 @@ import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, Head
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { StorageProvider, FileMetadata } from './StorageProvider';
 import { config } from '../../config/env';
+import { logger } from '../../config/logger';
 
 export class S3StorageProvider implements StorageProvider {
    private s3Client: S3Client;
@@ -61,7 +62,7 @@ export class S3StorageProvider implements StorageProvider {
          await this.s3Client.send(command);
          return filePath;
       } catch (error: any) {
-         console.error('Error uploading file to S3:', error);
+         logger.error({ err: error }, 'Error uploading file to S3');
          throw new Error(`Failed to upload file to S3: ${error.message}`);
       }
    }
@@ -95,7 +96,7 @@ export class S3StorageProvider implements StorageProvider {
 
          return Buffer.concat(chunks);
       } catch (error: any) {
-         console.error('Error downloading file from S3:', error);
+         logger.error({ err: error }, 'Error downloading file from S3');
          throw new Error(`Failed to download file from S3: ${error.message}`);
       }
    }
@@ -113,7 +114,7 @@ export class S3StorageProvider implements StorageProvider {
          await this.s3Client.send(command);
          return true;
       } catch (error: any) {
-         console.error('Error deleting file from S3:', error);
+         logger.error({ err: error }, 'Error deleting file from S3');
          return false;
       }
    }
@@ -130,7 +131,7 @@ export class S3StorageProvider implements StorageProvider {
 
          return await getSignedUrl(this.s3Client, command, { expiresIn });
       } catch (error: any) {
-         console.error('Error generating file URL from S3:', error);
+         logger.error({ err: error }, 'Error generating file URL from S3');
          throw new Error(`Failed to generate file URL: ${error.message}`);
       }
    }
@@ -153,7 +154,7 @@ export class S3StorageProvider implements StorageProvider {
             return false;
          }
 
-         console.error('Error checking file existence in S3:', error);
+         logger.error({ err: error }, 'Error checking file existence in S3');
          throw new Error(`Failed to check file existence: ${error.message}`);
       }
    }
@@ -171,7 +172,7 @@ export class S3StorageProvider implements StorageProvider {
          const response = await this.s3Client.send(command);
          return response.Contents?.map((obj: any) => obj.Key || '') || [];
       } catch (error: any) {
-         console.error('Error listing files in S3:', error);
+         logger.error({ err: error }, 'Error listing files in S3');
          return [];
       }
    }
@@ -195,7 +196,7 @@ export class S3StorageProvider implements StorageProvider {
             etag: response.ETag,
          };
       } catch (error: any) {
-         console.error('Error getting file metadata from S3:', error);
+         logger.error({ err: error }, 'Error getting file metadata from S3');
          return null;
       }
    }
@@ -214,7 +215,7 @@ export class S3StorageProvider implements StorageProvider {
          await this.s3Client.send(command);
          return true;
       } catch (error: any) {
-         console.error('Error copying file in S3:', error);
+         logger.error({ err: error }, 'Error copying file in S3');
          return false;
       }
    }
@@ -233,7 +234,7 @@ export class S3StorageProvider implements StorageProvider {
          // Delete the original file
          return await this.deleteFile(sourcePath);
       } catch (error: any) {
-         console.error('Error moving file in S3:', error);
+         logger.error({ err: error }, 'Error moving file in S3');
          return false;
       }
    }
@@ -252,7 +253,7 @@ export class S3StorageProvider implements StorageProvider {
          await this.s3Client.send(command);
          return true;
       } catch (error: any) {
-         console.error('Error testing S3 connection:', error);
+         logger.error({ err: error }, 'Error testing S3 connection');
          return false;
       }
    }

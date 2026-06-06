@@ -7,6 +7,7 @@ import { StreamingCacheService, StreamingCacheFactory } from './StreamingCacheSe
 import { StorageProvider } from './storage/StorageProvider';
 import { StorageFactory } from './storage/StorageFactory';
 import { config } from '../config/env';
+import { logger } from '../config/logger';
 
 export interface StreamingOptions {
    chapterId: string;
@@ -91,7 +92,7 @@ export class HLSStreamingService {
          };
 
       } catch (error: any) {
-         console.error('Error generating master playlist:', error);
+         logger.error({ err: error }, 'Error generating master playlist');
          return this.createErrorResponse('Internal server error', 500);
       }
    }
@@ -147,7 +148,7 @@ export class HLSStreamingService {
          };
 
       } catch (error: any) {
-         console.error('Error generating variant playlist:', error);
+         logger.error({ err: error }, 'Error generating variant playlist');
          return this.createErrorResponse('Internal server error', 500);
       }
    }
@@ -212,7 +213,7 @@ export class HLSStreamingService {
          };
 
       } catch (error: any) {
-         console.error('Error getting segment:', error);
+         logger.error({ err: error }, 'Error getting segment');
          return this.createErrorResponse('Internal server error', 500);
       }
    }
@@ -259,7 +260,7 @@ export class HLSStreamingService {
          };
 
       } catch (error: any) {
-         console.error('Error getting streaming status:', error);
+         logger.error({ err: error }, 'Error getting streaming status');
          throw error;
       }
    }
@@ -318,7 +319,7 @@ export class HLSStreamingService {
 
          return transcodedChapters.map(tc => tc.bitrate);
       } catch (error: any) {
-         console.error('Error getting available bitrates:', error);
+         logger.error({ err: error }, 'Error getting available bitrates');
          return [];
       }
    }
@@ -446,7 +447,7 @@ export class HLSStreamingService {
 
          return playlist;
       } catch (error: any) {
-         console.error('Error generating variant playlist:', error);
+         logger.error({ err: error }, 'Error generating variant playlist');
          throw error;
       }
    }
@@ -533,7 +534,7 @@ export class HLSStreamingService {
 
          return true;
       } catch (error: any) {
-         console.error('Error preloading chapter:', error);
+         logger.error({ err: error }, 'Error preloading chapter');
          return false;
       }
    }
@@ -560,7 +561,7 @@ export class HLSStreamingService {
             popularBitrates: [] // TODO: Track bitrate usage
          };
       } catch (error: any) {
-         console.error('Error getting streaming analytics:', error);
+         logger.error({ err: error }, 'Error getting streaming analytics');
          return {
             totalRequests: 0,
             cacheHitRate: 0,

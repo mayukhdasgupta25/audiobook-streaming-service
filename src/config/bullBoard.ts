@@ -7,6 +7,7 @@ import { BullAdapter } from '@bull-board/api/bullAdapter';
 import { ExpressAdapter } from '@bull-board/express';
 import { BullQueueManager } from '../services/BullQueueManager';
 import { PrismaClient } from '@prisma/client';
+import { bullLogger } from './logger';
 
 export class BullBoardManager {
    private static instance: BullBoardManager;
@@ -51,9 +52,9 @@ export class BullBoardManager {
             serverAdapter: this.serverAdapter,
          });
 
-         console.log('Bull Board initialized successfully');
+         bullLogger.info('Bull Board initialized successfully');
       } catch (error: any) {
-         console.error('Error initializing Bull Board:', error);
+         bullLogger.error({ err: error }, 'Error initializing Bull Board');
          throw error;
       }
    }

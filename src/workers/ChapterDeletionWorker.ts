@@ -5,6 +5,7 @@
  */
 import { RabbitMQFactory, ChapterDeletionMessage } from '../config/rabbitmq';
 import { PrismaClient } from '@prisma/client';
+import { logger } from '../config/logger';
 
 export class ChapterDeletionWorker {
    private prisma: PrismaClient;
@@ -19,7 +20,7 @@ export class ChapterDeletionWorker {
     */
    async start(): Promise<void> {
       if (this.isRunning) {
-         console.log('Chapter deletion worker is already running');
+         logger.info('Chapter deletion worker is already running');
          return;
       }
 
@@ -27,16 +28,16 @@ export class ChapterDeletionWorker {
          // Ensure RabbitMQ connection is initialized
          await RabbitMQFactory.initialize();
 
-         console.log('Starting chapter deletion worker...');
+         logger.info('Starting chapter deletion worker...');
 
          // Start consuming from the chapter deletion queue
          await this.startConsumer();
 
          this.isRunning = true;
-         console.log('Chapter deletion worker started successfully');
+         logger.info('Chapter deletion worker started successfully');
 
       } catch (error: any) {
-         console.error('Failed to start chapter deletion worker:', error);
+         logger.error({ err: error }, 'Failed to start chapter deletion worker');
          throw error;
       }
    }
@@ -46,7 +47,7 @@ export class ChapterDeletionWorker {
     */
    async stop(): Promise<void> {
       if (!this.isRunning) {
-         console.log('Chapter deletion worker is not running');
+         logger.info('Chapter deletion worker is not running');
          return;
       }
 
@@ -54,9 +55,9 @@ export class ChapterDeletionWorker {
          // Note: We don't close RabbitMQ connection here as it may be used by other workers
          // The connection will be closed during application shutdown
          this.isRunning = false;
-         console.log('Chapter deletion worker stopped');
+         logger.info('Chapter deletion worker stopped');
       } catch (error: any) {
-         console.error('Error stopping chapter deletion worker:', error);
+         logger.error({ err: error }, 'Error stopping chapter deletion worker');
       }
    }
 
@@ -74,9 +75,9 @@ export class ChapterDeletionWorker {
             }
          );
 
-         console.log('Started consuming chapter deletion messages from audiobook.chapters.deleted');
+         logger.info('Started consuming chapter deletion messages from audiobook.chapters.deleted');
       } catch (error: any) {
-         console.error('Error starting consumer for chapter deletion queue:', error);
+         logger.error({ err: error }, 'Error starting consumer for chapter deletion queue');
          throw error;
       }
    }
@@ -90,7 +91,7 @@ export class ChapterDeletionWorker {
    ): Promise<void> {
       const { chapterId, timestamp } = messageData;
 
-      console.log(`Processing chapter deletion for chapterId: ${chapterId}, timestamp: ${timestamp}`);
+      logger.info({ chapterId, timestamp }, 'Processing chapter deletion for chapterId');
 
       // Validate message structure
       if (!chapterId || typeof chapterId !== 'string') {
@@ -110,11 +111,11 @@ export class ChapterDeletionWorker {
          });
 
          if (existingChapters.length === 0) {
-            console.log(`No transcoded chapters found for chapterId: ${chapterId}`);
+            logger.info({ chapterId }, 'No transcoded chapters found for chapterId');
             return;
          }
 
-         console.log(`Found ${existingChapters.length} transcoded chapter(s) to delete for chapterId: ${chapterId}`);
+         logger.info({ chapterId, count: existingChapters.length }, 'Found transcoded chapter(s) to delete for chapterId');
 
          // Delete all transcoded chapters matching the chapterId
          const deleteResult = await this.prisma.transcodedChapter.deleteMany({
@@ -123,12 +124,10 @@ export class ChapterDeletionWorker {
             }
          });
 
-         console.log(
-            `Successfully deleted ${deleteResult.count} transcoded chapter(s) for chapterId: ${chapterId}`
-         );
+         logger.info({ chapterId, count: deleteResult.count }, 'Successfully deleted transcoded chapter(s) for chapterId');
 
       } catch (error: any) {
-         console.error(`Error deleting transcoded chapters for chapterId ${chapterId}:`, error);
+         logger.error({ err: error, chapterId }, 'Error deleting transcoded chapters for chapterId');
          throw error;
       }
    }
@@ -158,14 +157,14 @@ export class ChapterDeletionWorker {
          // Test database connection
          await this.prisma.$queryRaw`SELECT 1`;
 
-         console.log('Chapter deletion worker test results:', {
+         logger.info({
             rabbitMQConnected: isConnected,
             databaseConnected: true
-         });
+         }, 'Chapter deletion worker test results');
 
          return isConnected;
       } catch (error: any) {
-         console.error('Chapter deletion worker test failed:', error);
+         logger.error({ err: error }, 'Chapter deletion worker test failed');
          return false;
       }
    }

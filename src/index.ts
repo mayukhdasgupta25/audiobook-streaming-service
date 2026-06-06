@@ -9,6 +9,8 @@ import session from 'express-session';
 import express from 'express';
 import helmet from 'helmet';
 import { config } from './config/env';
+import { logger } from './config/logger';
+import { apiLoggerMiddleware } from './middleware/ApiLoggerMiddleware';
 import { ErrorHandler } from './middleware/ErrorHandler';
 import { RabbitMQFactory } from './config/rabbitmq';
 import { TranscodingWorkerFactory } from './workers/TranscodingWorker';
@@ -34,6 +36,7 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(apiLoggerMiddleware);
 
 // Session configuration
 app.use(session({
@@ -78,10 +81,10 @@ const prisma = new PrismaClient({ adapter });
       // Initialize storage provider first
       const { StorageFactory } = require('./services/storage/StorageFactory');
       await StorageFactory.initialize();
-      console.log('Storage provider initialized successfully');
+      logger.info('Storage provider initialized successfully');
 
       await RabbitMQFactory.initialize();
-      console.log('RabbitMQ initialized successfully');
+      logger.info('RabbitMQ initialized successfully');
 
       // Start transcoding worker
       await TranscodingWorkerFactory.startWorker(prisma);
@@ -97,7 +100,7 @@ const prisma = new PrismaClient({ adapter });
       const bullBoardManager = BullBoardManager.getInstance(prisma);
       await bullBoardManager.initialize();
    } catch (error) {
-      console.error('Failed to initialize services:', error);
+      logger.error({ err: error }, 'Failed to initialize services');
    }
 })();
 
@@ -130,7 +133,7 @@ app.get('/health', async (_req, res) => {
          await prisma.$queryRaw`SELECT 1`;
          healthStatus.components.database = true;
       } catch (error) {
-         console.error('Database health check failed:', error);
+         logger.error({ err: error }, 'Database health check failed');
       }
 
       // Test Redis connection
@@ -138,7 +141,7 @@ app.get('/health', async (_req, res) => {
          const redis = require('./config/redis').RedisConnection.getInstance();
          healthStatus.components.redis = await redis.testConnection();
       } catch (error) {
-         console.error('Redis health check failed:', error);
+         logger.error({ err: error }, 'Redis health check failed');
       }
 
       // Test RabbitMQ connection
@@ -146,7 +149,7 @@ app.get('/health', async (_req, res) => {
          const rabbitMQ = RabbitMQFactory.getConnection();
          healthStatus.components.rabbitmq = rabbitMQ.isConnected();
       } catch (error) {
-         console.error('RabbitMQ health check failed:', error);
+         logger.error({ err: error }, 'RabbitMQ health check failed');
       }
 
       // Test storage provider
@@ -154,7 +157,7 @@ app.get('/health', async (_req, res) => {
          const storageProvider = require('./services/storage/StorageFactory').StorageFactory.getStorageProvider();
          healthStatus.components.storage = await storageProvider.testConnection();
       } catch (error) {
-         console.error('Storage health check failed:', error);
+         logger.error({ err: error }, 'Storage health check failed');
       }
 
       // Test FFmpeg
@@ -163,7 +166,7 @@ app.get('/health', async (_req, res) => {
          const service = new transcodingService(prisma);
          healthStatus.components.ffmpeg = await service.testFFmpegInstallation();
       } catch (error) {
-         console.error('FFmpeg health check failed:', error);
+         logger.error({ err: error }, 'FFmpeg health check failed');
       }
 
       // Test Bull workers
@@ -171,7 +174,7 @@ app.get('/health', async (_req, res) => {
          const bullWorkerLauncher = BullWorkerLauncher.getInstance(prisma);
          healthStatus.components.bullWorkers = bullWorkerLauncher.isReady();
       } catch (error) {
-         console.error('Bull workers health check failed:', error);
+         logger.error({ err: error }, 'Bull workers health check failed');
       }
 
       // Determine overall status
@@ -182,7 +185,7 @@ app.get('/health', async (_req, res) => {
       res.status(statusCode).json(healthStatus);
 
    } catch (error: any) {
-      console.error('Health check failed:', error);
+      logger.error({ err: error }, 'Health check failed');
       res.status(500).json({
          status: 'unhealthy',
          service: 'audio-streaming',
@@ -226,41 +229,41 @@ let server: ReturnType<typeof app.listen> | undefined;
 
 // Graceful shutdown function
 const gracefulShutdown = async (signal: string) => {
-   console.log(`${signal} received, shutting down gracefully...`);
+   logger.info({ signal }, 'Received signal, shutting down gracefully');
 
    try {
       // Stop accepting new connections
       if (server) {
          server.close(() => {
-            console.log('HTTP server closed');
+            logger.info('HTTP server closed');
          });
       }
 
       // Stop transcoding worker
       await TranscodingWorkerFactory.stopWorker();
-      console.log('Transcoding worker stopped');
+      logger.info('Transcoding worker stopped');
 
       // Stop chapter deletion worker
       await ChapterDeletionWorkerFactory.stopWorker();
-      console.log('Chapter deletion worker stopped');
+      logger.info('Chapter deletion worker stopped');
 
       // Stop Bull workers
       const bullWorkerLauncher = BullWorkerLauncher.getInstance(prisma);
       await bullWorkerLauncher.stop();
-      console.log('Bull workers stopped');
+      logger.info('Bull workers stopped');
 
       // Close RabbitMQ connection
       await RabbitMQFactory.shutdown();
-      console.log('RabbitMQ connection closed');
+      logger.info('RabbitMQ connection closed');
 
       // Close Prisma connection
       await prisma.$disconnect();
-      console.log('Database connection closed');
+      logger.info('Database connection closed');
 
-      console.log('Graceful shutdown completed');
+      logger.info('Graceful shutdown completed');
       process.exit(0);
    } catch (error) {
-      console.error('Error during graceful shutdown:', error);
+      logger.error({ err: error }, 'Error during graceful shutdown');
       process.exit(1);
    }
 };
@@ -275,19 +278,19 @@ process.on('SIGUSR2', () => gracefulShutdown('SIGUSR2'));
 // Start server
 const port = config.PORT;
 server = app.listen(port, () => {
-   console.log(`🎵 Audio Streaming Service running on port ${port}`);
-   console.log(`📚 Environment: ${config.NODE_ENV}`);
-   console.log(`🔗 Service URL: http://localhost:${port}`);
-   console.log(`❤️  Health Check: http://localhost:${port}/health`);
-   console.log(`📊 Streaming API: http://localhost:${port}/api/v1/stream`);
-   console.log(`🎛️  Bull Board: http://localhost:${port}/admin/queues`);
+   logger.info({ port }, 'Audio Streaming Service running on port');
+   logger.info({ nodeEnv: config.NODE_ENV }, 'Environment');
+   logger.info({ serviceUrl: `http://localhost:${port}` }, 'Service URL');
+   logger.info({ healthCheckUrl: `http://localhost:${port}/health` }, 'Health Check URL');
+   logger.info({ streamingApiUrl: `http://localhost:${port}/api/v1/stream` }, 'Streaming API URL');
+   logger.info({ bullBoardUrl: `http://localhost:${port}/admin/queues` }, 'Bull Board URL');
 }).on('error', (err: any) => {
    if (err.code === 'EADDRINUSE') {
-      console.error(`❌ Port ${port} is already in use. Please kill the existing process or use a different port.`);
-      console.error(`💡 Try running: netstat -ano | findstr :${port} to find the process using this port`);
+      logger.error({ port }, 'Port is already in use. Please kill the existing process or use a different port');
+      logger.error({ port, hint: `netstat -ano | findstr :${port}` }, 'Find the process using this port');
       process.exit(1);
    } else {
-      console.error('❌ Server error:', err);
+      logger.error({ err }, 'Server error');
       process.exit(1);
    }
 });

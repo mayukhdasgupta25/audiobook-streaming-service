@@ -7,6 +7,7 @@ import { PrismaClient } from '@prisma/client';
 import { TranscodingService } from '../services/TranscodingService';
 import { MasterPlaylistJobData } from '../config/bull';
 import { toStorageKey } from '../utils/storageKeys';
+import { bullLogger, logger } from '../config/logger';
 
 export class MasterPlaylistProcessor {
    private prisma: PrismaClient;
@@ -23,7 +24,7 @@ export class MasterPlaylistProcessor {
    public async processMasterPlaylist(job: Bull.Job<MasterPlaylistJobData>): Promise<void> {
       const { chapterId, variantBitrates } = job.data;
 
-      console.log(`Processing master playlist generation for chapter ${chapterId}`);
+      bullLogger.info({ chapterId }, 'Processing master playlist generation for chapter');
 
       try {
          // Update job progress
@@ -51,10 +52,10 @@ export class MasterPlaylistProcessor {
          // Update job progress
          await job.progress(100);
 
-         console.log(`Successfully completed master playlist generation for chapter ${chapterId}`);
+         bullLogger.info({ chapterId }, 'Successfully completed master playlist generation for chapter');
 
       } catch (error: any) {
-         console.error(`Master playlist generation failed for chapter ${chapterId}:`, error);
+         bullLogger.error({ err: error, chapterId }, 'Master playlist generation failed for chapter');
 
          // Update database with error
          await this.updateTranscodingJob(chapterId, 'failed', 0, error.message);
@@ -71,7 +72,7 @@ export class MasterPlaylistProcessor {
       const checkInterval = 5000; // 5 seconds
       const startTime = Date.now();
 
-      console.log(`Waiting for bitrate jobs to complete for chapter ${chapterId}, expected: ${expectedBitrates.join(', ')}`);
+      logger.info({ chapterId, expectedBitrates: expectedBitrates.join(', ') }, 'Waiting for bitrate jobs to complete for chapter');
 
       while (Date.now() - startTime < maxWaitTime) {
          // Check which bitrates have completed successfully
@@ -88,12 +89,12 @@ export class MasterPlaylistProcessor {
 
          // Wait for ALL expected bitrates to complete, or return what we have after timeout
          if (completedBitrates.length === expectedBitrates.length) {
-            console.log(`All ${completedBitrates.length} expected bitrates completed for chapter ${chapterId}: ${completedBitrates.join(', ')}`);
+            logger.info({ chapterId, count: completedBitrates.length, completedBitrates: completedBitrates.join(', ') }, 'All expected bitrates completed for chapter');
             return completedBitrates;
          }
 
          if (completedBitrates.length > 0) {
-            console.log(`Found ${completedBitrates.length}/${expectedBitrates.length} completed bitrates for chapter ${chapterId}: ${completedBitrates.join(', ')}. Waiting for more...`);
+            logger.info({ chapterId, completed: completedBitrates.length, expected: expectedBitrates.length, completedBitrates: completedBitrates.join(', ') }, 'Found partial completed bitrates for chapter, waiting for more');
          }
 
          // Wait before checking again
@@ -113,11 +114,11 @@ export class MasterPlaylistProcessor {
       const finalBitrates = finalCompleted.map(tc => tc.bitrate);
 
       if (finalBitrates.length > 0) {
-         console.warn(`Timeout waiting for all bitrate jobs for chapter ${chapterId}. Returning ${finalBitrates.length} completed bitrates: ${finalBitrates.join(', ')}`);
+         logger.warn({ chapterId, count: finalBitrates.length, completedBitrates: finalBitrates.join(', ') }, 'Timeout waiting for all bitrate jobs for chapter, returning completed bitrates');
          return finalBitrates;
       }
 
-      console.warn(`Timeout waiting for bitrate jobs for chapter ${chapterId}, no bitrates completed`);
+      logger.warn({ chapterId }, 'Timeout waiting for bitrate jobs for chapter, no bitrates completed');
       return [];
    }
 
@@ -142,7 +143,7 @@ export class MasterPlaylistProcessor {
             throw new Error('No completed transcoded chapters found');
          }
 
-         console.log(`Generating master playlist for chapter ${chapterId} with ${transcodedChapters.length} completed bitrates: ${transcodedChapters.map(tc => tc.bitrate).join(', ')}`);
+         logger.info({ chapterId, count: transcodedChapters.length, bitrates: transcodedChapters.map(tc => tc.bitrate).join(', ') }, 'Generating master playlist for chapter');
 
          // Create variant playlists data structure
          const variantPlaylists = transcodedChapters.map(tc => ({
@@ -156,7 +157,7 @@ export class MasterPlaylistProcessor {
 
          return masterPlaylist;
       } catch (error: any) {
-         console.error('Error generating master playlist:', error);
+         logger.error({ err: error }, 'Error generating master playlist');
          throw error;
       }
    }
@@ -177,9 +178,9 @@ export class MasterPlaylistProcessor {
             'application/vnd.apple.mpegurl'
          );
 
-         console.log(`Master playlist uploaded for chapter ${chapterId}`);
+         logger.info({ chapterId }, 'Master playlist uploaded for chapter');
       } catch (error: any) {
-         console.error('Error uploading master playlist:', error);
+         logger.error({ err: error }, 'Error uploading master playlist');
          throw error;
       }
    }
@@ -226,7 +227,7 @@ export class MasterPlaylistProcessor {
             });
          }
       } catch (error: any) {
-         console.error('Error updating transcoding job:', error);
+         logger.error({ err: error }, 'Error updating transcoding job');
       }
    }
 }

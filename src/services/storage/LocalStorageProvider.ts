@@ -5,6 +5,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { StorageProvider, FileMetadata } from './StorageProvider';
+import { logger } from '../../config/logger';
 
 export class LocalStorageProvider implements StorageProvider {
    private basePath: string;
@@ -40,7 +41,7 @@ export class LocalStorageProvider implements StorageProvider {
 
          return filePath;
       } catch (error: any) {
-         console.error('Error uploading file to local storage:', error);
+         logger.error({ err: error }, 'Error uploading file to local storage');
          throw new Error(`Failed to upload file: ${error.message}`);
       }
    }
@@ -53,7 +54,7 @@ export class LocalStorageProvider implements StorageProvider {
          const fullPath = path.join(this.basePath, filePath);
          return await fs.readFile(fullPath);
       } catch (error: any) {
-         console.error('Error downloading file from local storage:', error);
+         logger.error({ err: error }, 'Error downloading file from local storage');
          throw new Error(`Failed to download file: ${error.message}`);
       }
    }
@@ -76,7 +77,7 @@ export class LocalStorageProvider implements StorageProvider {
 
          return true;
       } catch (error: any) {
-         console.error('Error deleting file from local storage:', error);
+         logger.error({ err: error }, 'Error deleting file from local storage');
          return false;
       }
    }
@@ -125,7 +126,7 @@ export class LocalStorageProvider implements StorageProvider {
 
          return fileList;
       } catch (error: any) {
-         console.error('Error listing files in local storage:', error);
+         logger.error({ err: error }, 'Error listing files in local storage');
          return [];
       }
    }
@@ -144,7 +145,7 @@ export class LocalStorageProvider implements StorageProvider {
             contentType: undefined // We don't store content type in local storage
          };
       } catch (error: any) {
-         console.error('Error getting file metadata from local storage:', error);
+         logger.error({ err: error }, 'Error getting file metadata from local storage');
          return null;
       }
    }
@@ -164,7 +165,7 @@ export class LocalStorageProvider implements StorageProvider {
          await fs.copyFile(sourceFullPath, destFullPath);
          return true;
       } catch (error: any) {
-         console.error('Error copying file in local storage:', error);
+         logger.error({ err: error }, 'Error copying file in local storage');
          return false;
       }
    }
@@ -184,7 +185,7 @@ export class LocalStorageProvider implements StorageProvider {
          await fs.rename(sourceFullPath, destFullPath);
          return true;
       } catch (error: any) {
-         console.error('Error moving file in local storage:', error);
+         logger.error({ err: error }, 'Error moving file in local storage');
          return false;
       }
    }
@@ -204,7 +205,7 @@ export class LocalStorageProvider implements StorageProvider {
 
          return true;
       } catch (error: any) {
-         console.error('Error testing local storage connection:', error);
+         logger.error({ err: error }, 'Error testing local storage connection');
          return false;
       }
    }

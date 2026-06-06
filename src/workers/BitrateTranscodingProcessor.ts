@@ -8,6 +8,7 @@ import { TranscodingService } from '../services/TranscodingService';
 import { BitrateTranscodingJobData } from '../config/bull';
 import { config } from '../config/env';
 import { toStorageKey } from '../utils/storageKeys';
+import { bullLogger, logger } from '../config/logger';
 
 export class BitrateTranscodingProcessor {
    private prisma: PrismaClient;
@@ -24,7 +25,7 @@ export class BitrateTranscodingProcessor {
    public async processBitrateTranscoding(job: Bull.Job<BitrateTranscodingJobData>): Promise<void> {
       const { chapterId, inputPath, outputDir, bitrate, segmentDuration, userId } = job.data;
 
-      console.log(`Processing bitrate transcoding job for chapter ${chapterId}, bitrate ${bitrate}k`);
+      bullLogger.info({ chapterId, bitrate }, 'Processing bitrate transcoding job for chapter');
 
       try {
          // Update job progress
@@ -41,7 +42,7 @@ export class BitrateTranscodingProcessor {
          });
 
          if (existingTranscoded && existingTranscoded.status === 'completed') {
-            console.log(`Chapter ${chapterId} already transcoded for bitrate ${bitrate}k`);
+            bullLogger.info({ chapterId, bitrate }, 'Chapter already transcoded for bitrate');
             await job.progress(100);
             return;
          }
@@ -68,10 +69,10 @@ export class BitrateTranscodingProcessor {
          // Update job progress
          await job.progress(100);
 
-         console.log(`Successfully completed bitrate transcoding for chapter ${chapterId}, bitrate ${bitrate}k`);
+         bullLogger.info({ chapterId, bitrate }, 'Successfully completed bitrate transcoding for chapter');
 
       } catch (error: any) {
-         console.error(`Bitrate transcoding failed for chapter ${chapterId}, bitrate ${bitrate}k:`, error);
+         bullLogger.error({ err: error, chapterId, bitrate }, 'Bitrate transcoding failed for chapter');
 
          // Update database with error
          await this.updateTranscodingJob(chapterId, bitrate, 'failed', 0, error.message);
@@ -115,9 +116,9 @@ export class BitrateTranscodingProcessor {
             }
          });
 
-         console.log(`Updated transcoded chapter record for chapter ${chapterId}, bitrate ${bitrate}k`);
+         logger.info({ chapterId, bitrate }, 'Updated transcoded chapter record for chapter');
       } catch (error: any) {
-         console.error('Error updating transcoded chapter:', error);
+         logger.error({ err: error }, 'Error updating transcoded chapter');
          throw error;
       }
    }
@@ -165,7 +166,7 @@ export class BitrateTranscodingProcessor {
             });
          }
       } catch (error: any) {
-         console.error('Error updating transcoding job:', error);
+         logger.error({ err: error }, 'Error updating transcoding job');
       }
    }
 }

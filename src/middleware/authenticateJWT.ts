@@ -8,6 +8,7 @@ import jwt from 'jsonwebtoken';
 import convertJwkToPem from 'jwk-to-pem';
 import axios from 'axios';
 import { config } from '../config/env';
+import { logger } from '../config/logger';
 import { JWKSResponse, JWK, JWTHeader, AuthenticatedRequest } from '../types/auth';
 
 /**
@@ -128,7 +129,7 @@ export async function authenticateJWT(
       // 6. Verify token signature and extract payload
       try {
          const decoded = jwt.verify(token, publicKey, { algorithms: ['RS256'] }) as jwt.JwtPayload;
-         console.log('Token verified successfully');
+         logger.info('Token verified successfully');
 
          // Extract user info from token payload
          // Standard JWT claims: sub (subject/user ID), email, and custom claims like role
@@ -142,7 +143,7 @@ export async function authenticateJWT(
                const userInfo = await fetchUserInfoFromAuthService(token, userId);
                role = userInfo.role;
             } catch (fetchError: any) {
-               console.error('Failed to fetch user info from auth service:', fetchError.message);
+               logger.error({ err: fetchError, message: fetchError.message }, 'Failed to fetch user info from auth service');
                // Continue without role - will be handled by role middleware
                role = undefined;
             }
