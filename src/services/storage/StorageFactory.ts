@@ -5,6 +5,7 @@ import { StorageProvider, StorageConfig } from './StorageProvider';
 import { LocalStorageProvider } from './LocalStorageProvider';
 import { S3StorageProvider } from './S3StorageProvider';
 import { config } from '../../config/env';
+import { logger } from '../../config/logger';
 
 export class StorageFactory {
    private static storageProvider: StorageProvider | null = null;
@@ -58,9 +59,9 @@ export class StorageFactory {
             throw new Error(`Failed to connect to ${storageConfig.provider} storage`);
          }
 
-         console.log(`Storage provider (${storageConfig.provider}) initialized successfully`);
+         logger.info({ provider: storageConfig.provider }, 'Storage provider initialized successfully');
       } catch (error) {
-         console.error('Storage initialization failed:', error);
+         logger.error({ err: error }, 'Storage initialization failed');
          throw error;
       }
    }
