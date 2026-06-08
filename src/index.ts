@@ -12,6 +12,7 @@ import { config } from './config/env';
 import { logger } from './config/logger';
 import { apiLoggerMiddleware } from './middleware/ApiLoggerMiddleware';
 import { ErrorHandler } from './middleware/ErrorHandler';
+import { requireHealthSupportAuth } from './middleware/healthSupportAuth';
 import { RabbitMQFactory } from './config/rabbitmq';
 import { TranscodingWorkerFactory } from './workers/TranscodingWorker';
 import { ChapterDeletionWorkerFactory } from './workers/ChapterDeletionWorker';
@@ -111,8 +112,8 @@ app.use('/api/v1/stream', createStreamingRoutes(prisma));
 const bullBoardManager = BullBoardManager.getInstance(prisma);
 app.use(bullBoardManager.getBasePath(), bullBoardManager.getRouter());
 
-// Health check endpoint
-app.get('/health', async (_req, res) => {
+// Health check endpoint — separate support auth (not JWT)
+app.get('/api/stream/health', requireHealthSupportAuth, async (_req, res) => {
    try {
       const healthStatus = {
          status: 'healthy',
@@ -203,7 +204,7 @@ app.get('/', (_req, res) => {
       status: 'running',
       timestamp: new Date().toISOString(),
       endpoints: {
-         health: '/health',
+         health: '/api/stream/health',
          streaming: '/api/v1/stream',
          masterPlaylist: '/api/v1/stream/chapters/:chapterId/master.m3u8',
          variantPlaylist: '/api/v1/stream/chapters/:chapterId/:bitrate/playlist.m3u8',
@@ -281,7 +282,7 @@ server = app.listen(port, () => {
    logger.info({ port }, 'Audio Streaming Service running on port');
    logger.info({ nodeEnv: config.NODE_ENV }, 'Environment');
    logger.info({ serviceUrl: `http://localhost:${port}` }, 'Service URL');
-   logger.info({ healthCheckUrl: `http://localhost:${port}/health` }, 'Health Check URL');
+   logger.info({ healthCheckUrl: `http://localhost:${port}/api/stream/health` }, 'Health Check URL');
    logger.info({ streamingApiUrl: `http://localhost:${port}/api/v1/stream` }, 'Streaming API URL');
    logger.info({ bullBoardUrl: `http://localhost:${port}/admin/queues` }, 'Bull Board URL');
 }).on('error', (err: any) => {
