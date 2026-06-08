@@ -9,7 +9,7 @@ describe('Streaming Service API', () => {
       app.use(express.json());
 
       // Mock health endpoint
-      app.get('/health', (req, res) => {
+      app.get('/api/stream/health', (req, res) => {
          res.json({
             status: 'healthy',
             service: 'audio-streaming',
@@ -33,7 +33,7 @@ describe('Streaming Service API', () => {
             status: 'running',
             timestamp: new Date().toISOString(),
             endpoints: {
-               health: '/health',
+               health: '/api/stream/health',
                streaming: '/api/v1/stream'
             }
          });
@@ -49,10 +49,10 @@ describe('Streaming Service API', () => {
       });
    });
 
-   describe('GET /health', () => {
+   describe('GET /api/stream/health', () => {
       it('should return health status', async () => {
          const response = await request(app)
-            .get('/health')
+            .get('/api/stream/health')
             .expect(200);
 
          expect(response.body).toHaveProperty('status', 'healthy');

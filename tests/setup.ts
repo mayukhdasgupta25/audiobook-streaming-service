@@ -5,6 +5,8 @@ process.env['NODE_ENV'] = 'test';
 process.env['PORT'] = '8083';
 process.env['TRUST_PROXY'] = '0';
 process.env['SESSION_SECRET'] = 'test-session-secret';
+process.env['HEALTH_SUPPORT_EMAIL'] = 'no-reply@srota-support.com';
+process.env['HEALTH_SUPPORT_PASSWORD'] = 'test-health-password';
 
 process.env['DATABASE_URL'] = 'postgresql://postgres:postgres@localhost:5432/test_db?schema=public';
 

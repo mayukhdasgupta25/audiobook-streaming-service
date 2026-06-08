@@ -29,8 +29,5 @@ export const createStreamingRoutes = (prisma: PrismaClient) => {
    // Analytics endpoint
    router.get('/analytics', streamingController.getAnalytics);
 
-   // Health check endpoint (excluded from auth by middleware)
-   router.get('/health', streamingController.getHealthStatus);
-
    return router;
 };
