@@ -29,6 +29,8 @@ export class StreamingController {
     *     summary: Get master HLS playlist for chapter
     *     description: Returns the master playlist containing all available bitrates for a chapter
     *     tags: [Streaming]
+    *     security:
+    *       - bearerAuth: []
     *     parameters:
     *       - name: chapterId
     *         in: path
@@ -38,14 +40,18 @@ export class StreamingController {
     *         description: Chapter ID
     *       - name: bandwidth
     *         in: query
+    *         required: false
     *         schema:
     *           type: integer
-    *         description: Client bandwidth in bps (for bitrate selection)
+    *           example: 500000
+    *         description: Optional client bandwidth in bps (for bitrate selection)
     *       - name: bitrate
     *         in: query
+    *         required: false
     *         schema:
     *           type: integer
-    *         description: Preferred bitrate in kbps
+    *           example: 128
+    *         description: Optional preferred bitrate in kbps
     *     responses:
     *       200:
     *         description: Master playlist returned successfully
@@ -53,6 +59,8 @@ export class StreamingController {
     *           application/vnd.apple.mpegurl:
     *             schema:
     *               type: string
+    *       401:
+    *         $ref: '#/components/responses/Unauthorized'
     *       404:
     *         description: Chapter not found or no transcoded versions available
     *       500:
@@ -93,6 +101,8 @@ export class StreamingController {
     *     summary: Get variant HLS playlist for specific bitrate
     *     description: Returns the variant playlist for a specific bitrate containing segment information
     *     tags: [Streaming]
+    *     security:
+    *       - bearerAuth: []
     *     parameters:
     *       - name: chapterId
     *         in: path
@@ -113,6 +123,10 @@ export class StreamingController {
     *           application/vnd.apple.mpegurl:
     *             schema:
     *               type: string
+    *       400:
+    *         description: Invalid bitrate path parameter
+    *       401:
+    *         $ref: '#/components/responses/Unauthorized'
     *       404:
     *         description: Chapter not found or transcoded version not available
     *       500:
@@ -150,6 +164,8 @@ export class StreamingController {
     *     summary: Get HLS segment
     *     description: Returns a specific HLS segment file for streaming
     *     tags: [Streaming]
+    *     security:
+    *       - bearerAuth: []
     *     parameters:
     *       - name: chapterId
     *         in: path
@@ -168,15 +184,24 @@ export class StreamingController {
     *         required: true
     *         schema:
     *           type: string
-    *         description: Segment ID (e.g., segment_001.ts)
+    *           example: segment_001.m4s
+    *         description: Segment filename (e.g. segment_001.m4s or segment_001.ts)
     *     responses:
     *       200:
     *         description: Segment returned successfully
     *         content:
+    *           video/mp4:
+    *             schema:
+    *               type: string
+    *               format: binary
     *           video/mp2t:
     *             schema:
     *               type: string
     *               format: binary
+    *       400:
+    *         description: Invalid bitrate path parameter
+    *       401:
+    *         $ref: '#/components/responses/Unauthorized'
     *       404:
     *         description: Segment not found
     *       500:
@@ -215,6 +240,8 @@ export class StreamingController {
     *     summary: Get streaming status for chapter
     *     description: Returns the current streaming status and available bitrates for a chapter
     *     tags: [Streaming]
+    *     security:
+    *       - bearerAuth: []
     *     parameters:
     *       - name: chapterId
     *         in: path
@@ -228,22 +255,41 @@ export class StreamingController {
     *         content:
     *           application/json:
     *             schema:
-    *               type: object
-    *               properties:
-    *                 chapterId:
-    *                   type: string
-    *                 availableBitrates:
-    *                   type: array
-    *                   items:
-    *                     type: integer
-    *                 transcodingStatus:
-    *                   type: string
-    *                 canStream:
-    *                   type: boolean
-    *                 estimatedBandwidth:
-    *                   type: integer
-    *       404:
-    *         description: Chapter not found
+    *               allOf:
+    *                 - $ref: '#/components/schemas/ApiResponse'
+    *                 - type: object
+    *                   properties:
+    *                     data:
+    *                       $ref: '#/components/schemas/StreamingStatus'
+    *             examples:
+    *               ready:
+    *                 summary: Chapter ready to stream
+    *                 value:
+    *                   success: true
+    *                   message: "Streaming status retrieved"
+    *                   data:
+    *                     chapterId: "cchapter1234567890abcdef"
+    *                     availableBitrates: [64, 128, 192]
+    *                     transcodingStatus: "completed"
+    *                     canStream: true
+    *                     estimatedBandwidth: 192000
+    *                   timestamp: "2024-01-15T10:30:00Z"
+    *                   statusCode: 200
+    *               notReady:
+    *                 summary: Chapter not yet transcoded
+    *                 value:
+    *                   success: true
+    *                   message: "Streaming status retrieved"
+    *                   data:
+    *                     chapterId: "cchapter1234567890abcdef"
+    *                     availableBitrates: []
+    *                     transcodingStatus: "pending"
+    *                     canStream: false
+    *                     estimatedBandwidth: 0
+    *                   timestamp: "2024-01-15T10:30:00Z"
+    *                   statusCode: 200
+    *       401:
+    *         $ref: '#/components/responses/Unauthorized'
     *       500:
     *         description: Internal server error
     */
@@ -268,6 +314,8 @@ export class StreamingController {
     *     summary: Preload chapter for streaming
     *     description: Preloads chapter segments into cache for faster streaming
     *     tags: [Streaming]
+    *     security:
+    *       - bearerAuth: []
     *     parameters:
     *       - name: chapterId
     *         in: path
@@ -276,6 +324,7 @@ export class StreamingController {
     *           type: string
     *         description: Chapter ID
     *     requestBody:
+    *       required: false
     *       content:
     *         application/json:
     *           schema:
@@ -283,12 +332,41 @@ export class StreamingController {
     *             properties:
     *               bitrate:
     *                 type: integer
-    *                 description: Bitrate to preload (defaults to highest available)
+    *                 example: 128
+    *                 description: Optional bitrate in kbps (defaults to highest available)
+    *           examples:
+    *             defaultBitrate:
+    *               summary: Preload with default (highest) bitrate
+    *               value: {}
+    *             specificBitrate:
+    *               summary: Preload specific bitrate
+    *               value:
+    *                 bitrate: 128
     *     responses:
     *       200:
     *         description: Preload initiated successfully
+    *         content:
+    *           application/json:
+    *             schema:
+    *               allOf:
+    *                 - $ref: '#/components/schemas/ApiResponse'
+    *                 - type: object
+    *                   properties:
+    *                     data:
+    *                       $ref: '#/components/schemas/PreloadResult'
+    *             example:
+    *               success: true
+    *               message: "Chapter preloaded"
+    *               data:
+    *                 chapterId: "cchapter1234567890abcdef"
+    *                 bitrate: 128
+    *                 status: "preloaded"
+    *               timestamp: "2024-01-15T10:30:00Z"
+    *               statusCode: 200
+    *       401:
+    *         $ref: '#/components/responses/Unauthorized'
     *       404:
-    *         description: Chapter not found or transcoded version not available
+    *         $ref: '#/components/responses/NotFound'
     *       500:
     *         description: Internal server error
     */
@@ -333,36 +411,43 @@ export class StreamingController {
     *   get:
     *     summary: Get streaming analytics
     *     description: Returns streaming performance and usage analytics
-    *     tags: [Streaming]
+    *     tags: [Analytics]
+    *     security:
+    *       - bearerAuth: []
     *     parameters:
     *       - name: chapterId
     *         in: query
+    *         required: false
     *         schema:
     *           type: string
-    *         description: Optional chapter ID to get specific analytics
+    *           example: "cchapter1234567890abcdef"
+    *         description: Optional chapter ID to get chapter-specific analytics (omit for global analytics)
     *     responses:
     *       200:
     *         description: Analytics retrieved successfully
     *         content:
     *           application/json:
     *             schema:
-    *               type: object
-    *               properties:
-    *                 totalRequests:
-    *                   type: integer
-    *                 cacheHitRate:
-    *                   type: number
-    *                 averageBandwidth:
-    *                   type: integer
+    *               allOf:
+    *                 - $ref: '#/components/schemas/ApiResponse'
+    *                 - type: object
+    *                   properties:
+    *                     data:
+    *                       $ref: '#/components/schemas/StreamingAnalytics'
+    *             example:
+    *               success: true
+    *               message: "Analytics retrieved"
+    *               data:
+    *                 totalRequests: 1000
+    *                 cacheHitRate: 0.85
+    *                 averageBandwidth: 128000
     *                 popularBitrates:
-    *                   type: array
-    *                   items:
-    *                     type: object
-    *                     properties:
-    *                       bitrate:
-    *                         type: integer
-    *                       requests:
-    *                         type: integer
+    *                   - bitrate: 128
+    *                     requests: 42
+    *               timestamp: "2024-01-15T10:30:00Z"
+    *               statusCode: 200
+    *       401:
+    *         $ref: '#/components/responses/Unauthorized'
     *       500:
     *         description: Internal server error
     */
@@ -386,39 +471,6 @@ export class StreamingController {
       ResponseHandler.success(res, analytics, MessageHandler.getStreamingMessageFromRequest(req, 'analytics_retrieved'));
    });
 
-   /**
-    * @swagger
-    * /api/v1/stream/health:
-    *   get:
-    *     summary: Get streaming service health status
-    *     description: Returns the health status of the streaming service components
-    *     tags: [Streaming]
-    *     responses:
-    *       200:
-    *         description: Health status retrieved successfully
-    *         content:
-    *           application/json:
-    *             schema:
-    *               type: object
-    *               properties:
-    *                 status:
-    *                   type: string
-    *                 components:
-    *                   type: object
-    *                   properties:
-    *                     database:
-    *                       type: boolean
-    *                     redis:
-    *                       type: boolean
-    *                     rabbitmq:
-    *                       type: boolean
-    *                     storage:
-    *                       type: boolean
-    *                     ffmpeg:
-    *                       type: boolean
-    *       500:
-    *         description: Internal server error
-    */
    getHealthStatus = ErrorHandler.asyncHandler(async (_req: Request, res: Response): Promise<void> => {
       try {
          const healthStatus = {
