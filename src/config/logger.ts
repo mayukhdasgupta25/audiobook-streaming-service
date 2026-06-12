@@ -35,7 +35,7 @@ function createLoggers(): ServiceLoggers {
    const baseLoggerConfig: pino.LoggerOptions = {
       level: config.LOG_LEVEL,
       formatters: {
-         level: (label) => ({ level: label }),
+         level: (label: string) => ({ level: label }),
       },
       timestamp: pino.stdTimeFunctions.isoTime,
    };
