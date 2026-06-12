@@ -13,6 +13,15 @@ A TypeScript Express.js streaming service with comprehensive setup and testing i
 - **Linting**: ESLint with TypeScript rules
 - **Environment**: Dotenv for environment variable management
 
+## API documentation
+
+When the service is running:
+
+- **Swagger UI**: `http://localhost:{PORT}/api-docs` — interactive API documentation
+- **OpenAPI spec**: `http://localhost:{PORT}/api-docs.json` — machine-readable specification
+
+The root `GET /` response also lists `apiDocs` and `openApiSpec` paths. Streaming endpoints are also documented on the app-service proxy at `/api/v1/stream/*` (kept in sync).
+
 ## 📋 Prerequisites
 
 - Node.js (v16 or higher)

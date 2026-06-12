@@ -19,6 +19,7 @@ import { ChapterDeletionWorkerFactory } from './workers/ChapterDeletionWorker';
 import { BullWorkerLauncher } from './workers/BullWorkerLauncher';
 import { BullBoardManager } from './config/bullBoard';
 import { createStreamingRoutes } from './routes/streamingRoutes';
+import { setupSwagger } from './config/swagger';
 import { PrismaClient } from '@prisma/client';
 import { adapter } from './config/prisma.config';
 import path from 'path';
@@ -107,6 +108,8 @@ const prisma = new PrismaClient({ adapter });
 
 // Streaming Routes
 app.use('/api/v1/stream', createStreamingRoutes(prisma));
+
+setupSwagger(app);
 
 // Bull Board Dashboard (Unauthorized access for now)
 const bullBoardManager = BullBoardManager.getInstance(prisma);
@@ -205,12 +208,13 @@ app.get('/', (_req, res) => {
       timestamp: new Date().toISOString(),
       endpoints: {
          health: '/api/stream/health',
+         apiDocs: '/api-docs',
+         openApiSpec: '/api-docs.json',
          streaming: '/api/v1/stream',
          masterPlaylist: '/api/v1/stream/chapters/:chapterId/master.m3u8',
          variantPlaylist: '/api/v1/stream/chapters/:chapterId/:bitrate/playlist.m3u8',
          segment: '/api/v1/stream/chapters/:chapterId/:bitrate/segments/:segmentId',
          status: '/api/v1/stream/chapters/:chapterId/status',
-         transcode: '/api/v1/stream/chapters/:chapterId/transcode',
          preload: '/api/v1/stream/chapters/:chapterId/preload',
          analytics: '/api/v1/stream/analytics',
          bullBoard: '/admin/queues'
@@ -283,6 +287,7 @@ server = app.listen(port, () => {
    logger.info({ nodeEnv: config.NODE_ENV }, 'Environment');
    logger.info({ serviceUrl: `http://localhost:${port}` }, 'Service URL');
    logger.info({ healthCheckUrl: `http://localhost:${port}/api/stream/health` }, 'Health Check URL');
+   logger.info({ swaggerUI: `http://localhost:${port}/api-docs`, openAPISpec: `http://localhost:${port}/api-docs.json` }, 'API documentation');
    logger.info({ streamingApiUrl: `http://localhost:${port}/api/v1/stream` }, 'Streaming API URL');
    logger.info({ bullBoardUrl: `http://localhost:${port}/admin/queues` }, 'Bull Board URL');
 }).on('error', (err: any) => {
