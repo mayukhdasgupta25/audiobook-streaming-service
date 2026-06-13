@@ -24,6 +24,11 @@ export interface StorageProvider {
    deleteFile(filePath: string): Promise<boolean>;
 
    /**
+    * Delete all files under a storage prefix (e.g. uploads/bit_transcode/{chapterId}/)
+    */
+   deleteFilesByPrefix(prefix: string): Promise<number>;
+
+   /**
     * Get a public URL for a file
     */
    getFileUrl(filePath: string, expiresIn?: number): Promise<string>;
