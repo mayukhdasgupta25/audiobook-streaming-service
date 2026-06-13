@@ -11,6 +11,8 @@ import { config } from '../config/env';
 import { toStorageKey } from '../utils/storageKeys';
 import { PrismaClient } from '@prisma/client';
 import { logger } from '../config/logger';
+import { BitrateTranscodingRepository } from './BitrateTranscodingRepository';
+import { TranscodingEventPublisher } from './TranscodingEventPublisher';
 
 export interface TranscodingOptions {
    inputPath: string;
@@ -41,10 +43,13 @@ export interface HLSPlaylist {
 export class TranscodingService {
    private prisma: PrismaClient;
    private storageProvider: StorageProvider | null = null;
+   private readonly bitrateRepo: BitrateTranscodingRepository;
+   private readonly eventPublisher: TranscodingEventPublisher;
 
    constructor(prisma: PrismaClient) {
       this.prisma = prisma;
-      // Storage provider will be initialized when needed
+      this.bitrateRepo = new BitrateTranscodingRepository(prisma);
+      this.eventPublisher = TranscodingEventPublisher.getInstance();
    }
 
    /**
@@ -252,6 +257,9 @@ export class TranscodingService {
    }> {
       const { inputPath, outputDir, bitrate, segmentDuration, id } = options;
 
+      await this.bitrateRepo.markProcessing(id, bitrate);
+      await this.eventPublisher.publishStatusTransition(id, bitrate, 'processing', 0);
+
       return new Promise((resolve, reject) => {
          const bitrateDir = path.join(process.cwd(), config.LOCAL_STORAGE_PATH, outputDir, `${bitrate}k`);
          const playlistPath = path.join(bitrateDir, 'playlist.m3u8');
@@ -259,9 +267,6 @@ export class TranscodingService {
 
          // Ensure bitrate directory exists
          this.ensureOutputDirectory(path.join(outputDir, `${bitrate}k`));
-
-         // Update job status to processing
-         this.updateTranscodingJob(id, bitrate, 'processing', 0);
 
          // Determine audio channels: mono (1) for 64k, stereo (2) for others
          const audioChannels = bitrate === 64 ? 1 : 2;
@@ -298,10 +303,12 @@ export class TranscodingService {
             .on('start', (commandLine: string) => {
                logger.info({ bitrate, commandLine }, 'Starting transcoding for bitrate');
             })
-            .on('progress', (progressInfo: any) => {
+            .on('progress', (progressInfo: { percent?: number }) => {
                if (progressInfo.percent) {
-                  progress = Math.round(progressInfo.percent);
-                  this.updateTranscodingJob(id, bitrate, 'processing', progress);
+                  progress = Math.round(Math.min(85, progressInfo.percent));
+                  void this.bitrateRepo.updateProgress(id, bitrate, progress);
+                  void this.eventPublisher.publishProgress(id, bitrate, progress);
+                  void this.updateTranscodingJob(id, bitrate, 'processing', progress);
                }
             })
             .on('end', async () => {
@@ -357,14 +364,21 @@ export class TranscodingService {
                   // Write updated playlist content back to file
                   await fs.writeFile(playlistPath, playlistContent, 'utf-8');
 
-                  // Upload playlist and segments to storage
-                  await this.uploadTranscodedFiles(bitrateDir, bitrate, playlistContent);
+                  // DB commit before S3 upload (prod)
+                  await this.bitrateRepo.updateProgress(id, bitrate, 88);
+                  await this.eventPublisher.publishProgress(id, bitrate, 88, { force: true });
+                  await this.bitrateRepo.commitCompletedLocal(id, bitrate);
+
+                  if (config.NODE_ENV !== 'development' && config.STORAGE_PROVIDER !== 'local') {
+                     await this.uploadTranscodedFilesWithProgress(bitrateDir, id, bitrate);
+                     await this.bitrateRepo.markStoredOnS3(id, bitrate);
+                  }
+
+                  await this.eventPublisher.publishStatusTransition(id, bitrate, 'completed', 100);
+                  await this.updateTranscodingJob(id, bitrate, 'completed', 100);
 
                   // Get segment list from playlist
                   const segmentList = this.extractSegmentsFromPlaylist(playlistContent);
-
-                  // Update job status to completed
-                  await this.updateTranscodingJob(id, bitrate, 'completed', 100);
 
                   resolve({
                      bitrate,
@@ -372,13 +386,22 @@ export class TranscodingService {
                      segments: segmentList
                   });
 
-               } catch (error: any) {
+               } catch (error: unknown) {
+                  const message = error instanceof Error ? error.message : 'Unknown error';
                   logger.error({ err: error, bitrate }, 'Error processing transcoded files for bitrate');
-                  reject(error);
+                  reject(new Error(message));
                }
             })
             .on('error', async (error: Error) => {
                logger.error({ err: error, bitrate }, 'Transcoding error for bitrate');
+               await this.bitrateRepo.markFailed(id, bitrate, progress, error.message);
+               await this.eventPublisher.publishStatusTransition(
+                  id,
+                  bitrate,
+                  'failed',
+                  progress,
+                  error.message
+               );
                await this.updateTranscodingJob(id, bitrate, 'failed', progress, error.message);
                reject(error);
             });
@@ -388,7 +411,44 @@ export class TranscodingService {
    }
 
    /**
-    * Upload transcoded files to storage
+    * Upload transcoded files to cloud storage with progress events (91-99%)
+    */
+   private async uploadTranscodedFilesWithProgress(
+      bitrateDir: string,
+      chapterId: string,
+      bitrate: number
+   ): Promise<void> {
+      if (!this.storageProvider) {
+         await this.initializeStorageProvider();
+      }
+
+      const segmentFiles = await fs.readdir(bitrateDir);
+      const uploadable = segmentFiles.filter(
+         f => /segment_\d+\.m4s$/.test(f) || f === 'init.mp4' || f === 'playlist.m3u8'
+      );
+      let uploaded = 0;
+
+      for (const file of uploadable) {
+         const filePath = path.join(bitrateDir, file);
+         const relativePath = toStorageKey(
+            path.relative(path.join(process.cwd(), config.LOCAL_STORAGE_PATH), filePath).replace(/\\/g, '/')
+         );
+         const content = await fs.readFile(filePath);
+         const contentType = file.endsWith('.m3u8')
+            ? 'application/vnd.apple.mpegurl'
+            : 'video/mp4';
+         await this.storageProvider!.uploadFile(relativePath, content, contentType);
+         uploaded += 1;
+         const uploadProgress = 91 + Math.round((uploaded / uploadable.length) * 8);
+         await this.bitrateRepo.updateProgress(chapterId, bitrate, uploadProgress);
+         await this.eventPublisher.publishProgress(chapterId, bitrate, uploadProgress, { force: true });
+      }
+
+      await this.cleanupLocalTranscodedFiles(bitrateDir);
+   }
+
+   /**
+    * Upload transcoded files to storage (legacy batch path)
     */
    private async uploadTranscodedFiles(
       bitrateDir: string,

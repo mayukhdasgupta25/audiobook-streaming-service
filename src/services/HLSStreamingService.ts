@@ -8,6 +8,7 @@ import { StorageProvider } from './storage/StorageProvider';
 import { StorageFactory } from './storage/StorageFactory';
 import { config } from '../config/env';
 import { logger } from '../config/logger';
+import { DetailedTranscodingService } from './DetailedTranscodingService';
 
 export interface StreamingOptions {
    chapterId: string;
@@ -42,11 +43,13 @@ export class HLSStreamingService {
    private prisma: PrismaClient;
    private cacheService: StreamingCacheService;
    private storageProvider: StorageProvider;
+   private readonly detailService: DetailedTranscodingService;
 
    constructor(prisma: PrismaClient) {
       this.prisma = prisma;
       this.cacheService = StreamingCacheFactory.getInstance();
       this.storageProvider = StorageFactory.getStorageProvider();
+      this.detailService = new DetailedTranscodingService(prisma);
    }
 
    /**
@@ -227,39 +230,32 @@ export class HLSStreamingService {
       transcodingStatus: string;
       canStream: boolean;
       estimatedBandwidth?: number;
+      masterPlaylistReady: boolean;
+      aggregateStatus: string;
+      bitrates: Array<{
+         bitrate: number;
+         status: string;
+         progress: number;
+         errorMessage?: string;
+      }>;
    }> {
       try {
-         // Check if chapter exists and user has access
-         // const chapter = await this.validateChapterAccess(chapterId, userId);
-         // if (!chapter) {
-         //    throw new Error('Chapter not found or access denied');
-         // }
-
-         // Get available bitrates
-         const availableBitrates = await this.getAvailableBitrates(chapterId);
-
-         // Get transcoding status
-         const transcodingJobs = await this.prisma.transcodingJob.findMany({
-            where: { chapterId },
-            orderBy: { createdAt: 'desc' },
-            take: 1
-         });
-
-         const transcodingStatus = transcodingJobs.length > 0 && transcodingJobs[0]
-            ? transcodingJobs[0].status
-            : 'not_started';
-
-         const canStream = availableBitrates.length > 0;
+         const detailed = await this.detailService.getDetailedStatus(chapterId);
+         const availableBitrates = detailed.bitrates
+            .filter(b => b.status === 'completed')
+            .map(b => b.bitrate);
 
          return {
             chapterId,
             availableBitrates,
-            transcodingStatus,
-            canStream,
-            estimatedBandwidth: this.estimateBandwidth(availableBitrates)
+            transcodingStatus: detailed.aggregateStatus,
+            canStream: detailed.canStream,
+            estimatedBandwidth: this.estimateBandwidth(availableBitrates),
+            masterPlaylistReady: detailed.masterPlaylistReady,
+            aggregateStatus: detailed.aggregateStatus,
+            bitrates: detailed.bitrates,
          };
-
-      } catch (error: any) {
+      } catch (error: unknown) {
          logger.error({ err: error }, 'Error getting streaming status');
          throw error;
       }

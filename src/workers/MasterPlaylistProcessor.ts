@@ -49,6 +49,8 @@ export class MasterPlaylistProcessor {
          // Upload HLS master playlist to storage
          await this.uploadMasterPlaylist(chapterId, masterPlaylist);
 
+         await this.updateTranscodingJob(chapterId, 'completed', 100);
+
          // Update job progress
          await job.progress(100);
 

@@ -78,17 +78,19 @@ export class BullQueueManager {
 
       queue.on('progress', async (job, progress) => {
          bullLogger.debug({ jobId: job.id, progress, queueName }, 'Job progress');
-         await this.updateJobStatus(job.data.chapterId, 'processing', progress);
+         // Per-bitrate progress is tracked in transcoded_chapters via TranscodingService
       });
 
       queue.on('completed', async (job) => {
          bullLogger.info({ jobId: job.id, queueName }, 'Job completed in queue');
-         await this.updateJobStatus(job.data.chapterId, 'completed', 100);
+         // Chapter-level completion is handled by MasterPlaylistProcessor
       });
 
       queue.on('failed', async (job, err) => {
          bullLogger.error({ err, jobId: job.id, queueName }, 'Job failed in queue');
-         await this.updateJobStatus(job.data.chapterId, 'failed', 0, err.message);
+         if (queueName === QUEUE_NAMES.MASTER_PLAYLIST) {
+            await this.updateJobStatus(job.data.chapterId, 'failed', 0, err.message);
+         }
       });
 
       queue.on('paused', () => {
@@ -199,6 +201,22 @@ export class BullQueueManager {
          return null;
       }
       return await queue.getJob(jobId);
+   }
+
+   public async removeJobsForChapter(chapterId: string): Promise<void> {
+      for (const [queueName, queue] of this.queues) {
+         const jobs = await queue.getJobs(['active', 'waiting', 'delayed']);
+         for (const job of jobs) {
+            if (job.data?.chapterId === chapterId) {
+               try {
+                  await job.remove();
+                  bullLogger.info({ jobId: job.id, queueName, chapterId }, 'Removed Bull job for chapter');
+               } catch (error: unknown) {
+                  bullLogger.warn({ err: error, jobId: job.id, chapterId }, 'Failed to remove Bull job');
+               }
+            }
+         }
+      }
    }
 
    public async retryJob(queueName: string, jobId: string): Promise<void> {

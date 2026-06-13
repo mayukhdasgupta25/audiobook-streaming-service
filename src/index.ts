@@ -215,6 +215,10 @@ app.get('/', (_req, res) => {
          variantPlaylist: '/api/v1/stream/chapters/:chapterId/:bitrate/playlist.m3u8',
          segment: '/api/v1/stream/chapters/:chapterId/:bitrate/segments/:segmentId',
          status: '/api/v1/stream/chapters/:chapterId/status',
+         transcoding: '/api/v1/stream/chapters/:chapterId/transcoding',
+         transcodingEvents: '/api/v1/stream/chapters/:chapterId/transcoding/events',
+         multiplexedTranscodingEvents: '/api/v1/stream/transcoding/events?chapterIds=',
+         transcodeRetry: '/api/v1/stream/chapters/:chapterId/transcode/retry',
          preload: '/api/v1/stream/chapters/:chapterId/preload',
          analytics: '/api/v1/stream/analytics',
          bullBoard: '/admin/queues'
