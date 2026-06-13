@@ -77,43 +77,25 @@ export class MasterPlaylistProcessor {
       logger.info({ chapterId, expectedBitrates: expectedBitrates.join(', ') }, 'Waiting for bitrate jobs to complete for chapter');
 
       while (Date.now() - startTime < maxWaitTime) {
-         // Check which bitrates have completed successfully
-         const completedTranscoded = await this.prisma.transcodedChapter.findMany({
-            where: {
-               chapterId,
-               bitrate: { in: expectedBitrates },
-               status: 'completed'
-            },
-            select: { bitrate: true }
-         });
+         const completedBitrates = await this.getCompletedBitrates(chapterId, expectedBitrates);
 
-         const completedBitrates = completedTranscoded.map(tc => tc.bitrate);
-
-         // Wait for ALL expected bitrates to complete, or return what we have after timeout
          if (completedBitrates.length === expectedBitrates.length) {
             logger.info({ chapterId, count: completedBitrates.length, completedBitrates: completedBitrates.join(', ') }, 'All expected bitrates completed for chapter');
             return completedBitrates;
+         }
+
+         if (await this.haveAllBitratesFailed(chapterId, expectedBitrates)) {
+            throw new Error('All bitrate transcoding jobs failed; retry transcoding after fixing the source file');
          }
 
          if (completedBitrates.length > 0) {
             logger.info({ chapterId, completed: completedBitrates.length, expected: expectedBitrates.length, completedBitrates: completedBitrates.join(', ') }, 'Found partial completed bitrates for chapter, waiting for more');
          }
 
-         // Wait before checking again
          await new Promise(resolve => setTimeout(resolve, checkInterval));
       }
 
-      // After timeout, return whatever bitrates have completed
-      const finalCompleted = await this.prisma.transcodedChapter.findMany({
-         where: {
-            chapterId,
-            bitrate: { in: expectedBitrates },
-            status: 'completed'
-         },
-         select: { bitrate: true }
-      });
-
-      const finalBitrates = finalCompleted.map(tc => tc.bitrate);
+      const finalBitrates = await this.getCompletedBitrates(chapterId, expectedBitrates);
 
       if (finalBitrates.length > 0) {
          logger.warn({ chapterId, count: finalBitrates.length, completedBitrates: finalBitrates.join(', ') }, 'Timeout waiting for all bitrate jobs for chapter, returning completed bitrates');
@@ -122,6 +104,33 @@ export class MasterPlaylistProcessor {
 
       logger.warn({ chapterId }, 'Timeout waiting for bitrate jobs for chapter, no bitrates completed');
       return [];
+   }
+
+   private async getCompletedBitrates(chapterId: string, expectedBitrates: number[]): Promise<number[]> {
+      const completedTranscoded = await this.prisma.transcodedChapter.findMany({
+         where: {
+            chapterId,
+            bitrate: { in: expectedBitrates },
+            status: 'completed',
+         },
+         select: { bitrate: true },
+      });
+
+      return completedTranscoded.map(tc => tc.bitrate);
+   }
+
+   private async haveAllBitratesFailed(chapterId: string, expectedBitrates: number[]): Promise<boolean> {
+      const rows = await this.prisma.transcodedChapter.findMany({
+         where: {
+            chapterId,
+            bitrate: { in: expectedBitrates },
+         },
+         select: { bitrate: true, status: true },
+      });
+
+      return expectedBitrates.every(
+         bitrate => rows.find(row => row.bitrate === bitrate)?.status === 'failed'
+      );
    }
 
    /**

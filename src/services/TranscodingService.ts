@@ -8,11 +8,15 @@ import fs from 'fs/promises';
 import { StorageProvider } from './storage/StorageProvider';
 import { StorageFactory } from './storage/StorageFactory';
 import { config } from '../config/env';
-import { toStorageKey } from '../utils/storageKeys';
+import { toStorageKey, resolveStorageCandidateKeys } from '../utils/storageKeys';
+import { resolveChapterSourceLocalPath } from '../utils/chapterSourceFile';
 import { PrismaClient } from '@prisma/client';
 import { logger } from '../config/logger';
 import { BitrateTranscodingRepository } from './BitrateTranscodingRepository';
 import { TranscodingEventPublisher } from './TranscodingEventPublisher';
+import { configureFfmpeg } from '../utils/ffmpegPath';
+
+configureFfmpeg();
 
 export interface TranscodingOptions {
    inputPath: string;
@@ -70,42 +74,42 @@ export class TranscodingService {
    private async ensureInputFileExists(filePath: string): Promise<void> {
       await this.initializeStorageProvider();
 
-      // In development, ensure file exists in local storage
       if (config.NODE_ENV === 'development') {
-         const storageKey = toStorageKey(filePath);
-         const fullPath = path.join(process.cwd(), config.LOCAL_STORAGE_PATH, storageKey);
-         const dirPath = path.dirname(fullPath);
+         const localPath = await resolveChapterSourceLocalPath(filePath);
+         if (localPath) {
+            logger.info({ fullPath: localPath }, 'Chapter source audio found for transcoding');
+            return;
+         }
 
-         // Create directory if it doesn't exist
-         await fs.mkdir(dirPath, { recursive: true });
-
-         // Check if file exists locally
-         try {
-            await fs.access(fullPath);
-            logger.info({ fullPath }, 'File already exists at path');
-         } catch {
-            // File doesn't exist locally, try to get it from storage provider
-            logger.info({ filePath }, 'File not found locally, downloading from storage');
-            const fileExists = await this.storageProvider!.fileExists(toStorageKey(filePath));
-
+         logger.info({ filePath }, 'Chapter source not found locally, checking storage provider');
+         const providerPaths = resolveStorageCandidateKeys(filePath);
+         for (const providerPath of providerPaths) {
+            const fileExists = await this.storageProvider!.fileExists(providerPath);
             if (!fileExists) {
-               throw new Error(`Input file not found in storage at path: ${filePath}`);
+               continue;
             }
-
-            const fileContent = await this.storageProvider!.downloadFile(toStorageKey(filePath));
-            await fs.writeFile(fullPath, fileContent);
-            logger.info({ fullPath }, 'File downloaded and saved to path');
+            const fileContent = await this.storageProvider!.downloadFile(providerPath);
+            const targetPath = path.join(
+               process.cwd(),
+               config.LOCAL_STORAGE_PATH,
+               resolveStorageCandidateKeys(filePath)[0]!
+            );
+            await fs.mkdir(path.dirname(targetPath), { recursive: true });
+            await fs.writeFile(targetPath, fileContent);
+            logger.info({ targetPath, providerPath }, 'Chapter source downloaded into streaming storage');
+            return;
          }
-      } else {
-         // For production/other environments, verify file exists in storage (S3)
-         const fileExists = await this.storageProvider!.fileExists(toStorageKey(filePath));
 
-         if (!fileExists) {
-            throw new Error(`Input file not found in storage at path: ${filePath}`);
-         }
-
-         logger.info({ filePath }, 'File verified in storage');
+         throw new Error(`Input file not found in storage at path: ${filePath}`);
       }
+
+      const storageKey = toStorageKey(filePath);
+      const fileExists = await this.storageProvider!.fileExists(storageKey);
+      if (!fileExists) {
+         throw new Error(`Input file not found in storage at path: ${filePath}`);
+      }
+
+      logger.info({ filePath }, 'File verified in storage');
    }
 
    /**
@@ -669,7 +673,6 @@ export class TranscodingService {
     */
    private async downloadToTemp(filePath: string): Promise<string> {
       try {
-         // Ensure storage provider is initialized
          if (!this.storageProvider) {
             await this.initializeStorageProvider();
          }
@@ -679,6 +682,14 @@ export class TranscodingService {
 
          const fileName = path.basename(filePath);
          const tempPath = path.join(tempDir, `temp_${Date.now()}_${fileName}`);
+
+         if (config.NODE_ENV === 'development') {
+            const localPath = await resolveChapterSourceLocalPath(filePath);
+            if (localPath) {
+               await fs.copyFile(localPath, tempPath);
+               return tempPath;
+            }
+         }
 
          const fileContent = await this.storageProvider!.downloadFile(toStorageKey(filePath));
          await fs.writeFile(tempPath, fileContent);

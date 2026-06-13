@@ -1,18 +1,23 @@
 /**
  * Chapter Deletion Worker
  * RabbitMQ consumer for processing chapter deletion messages
- * Deletes all transcoded_chapters records matching the chapterId
+ * Cleans up transcoding jobs, cache, storage artifacts, and DB records
  */
 import { RabbitMQFactory, ChapterDeletionMessage } from '../config/rabbitmq';
 import { PrismaClient } from '@prisma/client';
 import { logger } from '../config/logger';
+import { BullQueueManager } from '../services/BullQueueManager';
+import { StreamingCacheFactory } from '../services/StreamingCacheService';
+import { TranscodingArtifactCleanupService } from '../services/TranscodingArtifactCleanupService';
 
 export class ChapterDeletionWorker {
    private prisma: PrismaClient;
+   private bullQueueManager: BullQueueManager;
    private isRunning = false;
 
    constructor(prisma: PrismaClient) {
       this.prisma = prisma;
+      this.bullQueueManager = BullQueueManager.getInstance(prisma);
    }
 
    /**
@@ -25,18 +30,14 @@ export class ChapterDeletionWorker {
       }
 
       try {
-         // Ensure RabbitMQ connection is initialized
          await RabbitMQFactory.initialize();
 
          logger.info('Starting chapter deletion worker...');
-
-         // Start consuming from the chapter deletion queue
          await this.startConsumer();
 
          this.isRunning = true;
          logger.info('Chapter deletion worker started successfully');
-
-      } catch (error: any) {
+      } catch (error: unknown) {
          logger.error({ err: error }, 'Failed to start chapter deletion worker');
          throw error;
       }
@@ -52,18 +53,13 @@ export class ChapterDeletionWorker {
       }
 
       try {
-         // Note: We don't close RabbitMQ connection here as it may be used by other workers
-         // The connection will be closed during application shutdown
          this.isRunning = false;
          logger.info('Chapter deletion worker stopped');
-      } catch (error: any) {
+      } catch (error: unknown) {
          logger.error({ err: error }, 'Error stopping chapter deletion worker');
       }
    }
 
-   /**
-    * Start consumer for chapter deletion queue
-    */
    private async startConsumer(): Promise<void> {
       try {
          const rabbitMQ = RabbitMQFactory.getConnection();
@@ -76,7 +72,7 @@ export class ChapterDeletionWorker {
          );
 
          logger.info('Started consuming chapter deletion messages from audiobook.chapters.deleted');
-      } catch (error: any) {
+      } catch (error: unknown) {
          logger.error({ err: error }, 'Error starting consumer for chapter deletion queue');
          throw error;
       }
@@ -87,83 +83,87 @@ export class ChapterDeletionWorker {
     */
    private async processChapterDeletion(
       messageData: ChapterDeletionMessage,
-      _message: any
+      _message: unknown
    ): Promise<void> {
       const { chapterId, timestamp } = messageData;
 
       logger.info({ chapterId, timestamp }, 'Processing chapter deletion for chapterId');
 
-      // Validate message structure
       if (!chapterId || typeof chapterId !== 'string') {
          throw new Error(`Invalid chapterId in deletion message: ${chapterId}`);
       }
 
       try {
-         // Check if there are any transcoded chapters for this chapterId
-         const existingChapters = await this.prisma.transcodedChapter.findMany({
-            where: {
-               chapterId: chapterId
-            },
-            select: {
-               id: true,
-               bitrate: true
-            }
-         });
-
-         if (existingChapters.length === 0) {
-            logger.info({ chapterId }, 'No transcoded chapters found for chapterId');
-            return;
+         try {
+            await this.bullQueueManager.removeJobsForChapter(chapterId);
+         } catch (error: unknown) {
+            logger.warn({ err: error, chapterId }, 'Failed to remove Bull jobs for deleted chapter');
          }
 
-         logger.info({ chapterId, count: existingChapters.length }, 'Found transcoded chapter(s) to delete for chapterId');
+         try {
+            await StreamingCacheFactory.getInstance().clearChapterCache(chapterId);
+         } catch (error: unknown) {
+            logger.warn({ err: error, chapterId }, 'Failed to clear streaming cache for deleted chapter');
+         }
 
-         // Delete all transcoded chapters matching the chapterId
+         try {
+            await TranscodingArtifactCleanupService.cleanupChapterArtifacts(chapterId);
+         } catch (error: unknown) {
+            logger.warn({ err: error, chapterId }, 'Failed to remove HLS artifacts for deleted chapter');
+         }
+
+         const transcodingJobsResult = await this.prisma.transcodingJob.deleteMany({
+            where: { chapterId },
+         });
+         if (transcodingJobsResult.count > 0) {
+            logger.info({ chapterId, count: transcodingJobsResult.count }, 'Deleted transcoding job(s) for chapter');
+         }
+
+         const sessionsResult = await this.prisma.streamingSession.deleteMany({
+            where: { chapterId },
+         });
+         if (sessionsResult.count > 0) {
+            logger.info({ chapterId, count: sessionsResult.count }, 'Deleted streaming session(s) for chapter');
+         }
+
          const deleteResult = await this.prisma.transcodedChapter.deleteMany({
-            where: {
-               chapterId: chapterId
-            }
+            where: { chapterId },
          });
 
-         logger.info({ chapterId, count: deleteResult.count }, 'Successfully deleted transcoded chapter(s) for chapterId');
-
-      } catch (error: any) {
-         logger.error({ err: error, chapterId }, 'Error deleting transcoded chapters for chapterId');
+         logger.info(
+            { chapterId, count: deleteResult.count },
+            'Successfully completed chapter deletion cleanup'
+         );
+      } catch (error: unknown) {
+         logger.error({ err: error, chapterId }, 'Error during chapter deletion cleanup');
          throw error;
       }
    }
 
-   /**
-    * Get worker status
-    */
    async getWorkerStatus(): Promise<{
       isRunning: boolean;
       queueName: string;
    }> {
       return {
          isRunning: this.isRunning,
-         queueName: 'audiobook.chapters.deleted'
+         queueName: 'audiobook.chapters.deleted',
       };
    }
 
-   /**
-    * Test worker functionality
-    */
    async testWorker(): Promise<boolean> {
       try {
-         // Test RabbitMQ connection
          const rabbitMQ = RabbitMQFactory.getConnection();
          const isConnected = rabbitMQ.isConnected();
 
-         // Test database connection
          await this.prisma.$queryRaw`SELECT 1`;
 
          logger.info({
             rabbitMQConnected: isConnected,
-            databaseConnected: true
+            databaseConnected: true,
          }, 'Chapter deletion worker test results');
 
          return isConnected;
-      } catch (error: any) {
+      } catch (error: unknown) {
          logger.error({ err: error }, 'Chapter deletion worker test failed');
          return false;
       }
@@ -176,9 +176,6 @@ export class ChapterDeletionWorker {
 export class ChapterDeletionWorkerFactory {
    private static worker: ChapterDeletionWorker | null = null;
 
-   /**
-    * Get worker instance
-    */
    public static getWorker(prisma: PrismaClient): ChapterDeletionWorker {
       if (!ChapterDeletionWorkerFactory.worker) {
          ChapterDeletionWorkerFactory.worker = new ChapterDeletionWorker(prisma);
@@ -186,17 +183,11 @@ export class ChapterDeletionWorkerFactory {
       return ChapterDeletionWorkerFactory.worker;
    }
 
-   /**
-    * Start worker
-    */
    public static async startWorker(prisma: PrismaClient): Promise<void> {
       const worker = ChapterDeletionWorkerFactory.getWorker(prisma);
       await worker.start();
    }
 
-   /**
-    * Stop worker
-    */
    public static async stopWorker(): Promise<void> {
       if (ChapterDeletionWorkerFactory.worker) {
          await ChapterDeletionWorkerFactory.worker.stop();
@@ -204,4 +195,3 @@ export class ChapterDeletionWorkerFactory {
       }
    }
 }
-

@@ -15,3 +15,17 @@ export function toStorageKey(relativePath: string): string {
       ? normalized
       : `uploads/${normalized}`;
 }
+
+/**
+ * Candidate storage keys for chapter source files.
+ * DB paths use /uploads/... while on-disk dev storage may omit or retain that prefix.
+ */
+export function resolveStorageCandidateKeys(relativePath: string): string[] {
+   const normalized = relativePath.replace(/^\/+/, '');
+   const primary = toStorageKey(relativePath);
+   const withUploadsPrefix = normalized.startsWith('uploads/')
+      ? normalized
+      : `uploads/${normalized}`;
+
+   return [...new Set([primary, withUploadsPrefix])];
+}
