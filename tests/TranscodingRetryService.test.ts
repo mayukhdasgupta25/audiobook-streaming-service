@@ -1,8 +1,21 @@
-import { TranscodingRetryService } from '../src/services/TranscodingRetryService';
-
 jest.mock('../src/config/env', () => ({
-   config: { TRANSCODING_BITRATES: [64, 128], HLS_SEGMENT_DURATION: 6 },
+   config: {
+      TRANSCODING_BITRATES: [64, 128],
+      HLS_SEGMENT_DURATION: 6,
+      NODE_ENV: 'test',
+   },
 }));
+
+jest.mock('../src/config/logger', () => ({
+   logger: {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+   },
+}));
+
+import { TranscodingRetryService } from '../src/services/TranscodingRetryService';
 
 const mockResetForRetry = jest.fn().mockResolvedValue(undefined);
 const mockPublishStatusTransition = jest.fn().mockResolvedValue(undefined);

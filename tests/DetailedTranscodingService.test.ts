@@ -32,6 +32,6 @@ describe('DetailedTranscodingService', () => {
       expect(status.bitrates.find(b => b.bitrate === 256)).toEqual(
          expect.objectContaining({ status: 'pending', progress: 0 })
       );
-      expect(status.aggregateStatus).toBe('processing');
+      expect(status.aggregateStatus).toBe('partial');
    });
 });

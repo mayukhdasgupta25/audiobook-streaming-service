@@ -1,3 +1,20 @@
+const mockPublish = jest.fn().mockResolvedValue(1);
+
+jest.mock('../src/config/redis', () => ({
+   RedisConnection: {
+      getInstance: () => ({
+         getClient: () => ({
+            publish: mockPublish,
+            duplicate: jest.fn(),
+         }),
+      }),
+   },
+}));
+
+jest.mock('../src/config/logger', () => ({
+   redisLogger: { error: jest.fn() },
+}));
+
 import { TranscodingEventPublisher } from '../src/services/TranscodingEventPublisher';
 
 describe('TranscodingEventPublisher', () => {
@@ -19,16 +36,12 @@ describe('TranscodingEventPublisher', () => {
    it('throttles progress events within 500ms and 2% delta', async () => {
       const publisher = TranscodingEventPublisher.getInstance();
       publisher.clearThrottle('chapter-2', 64);
-
-      const publishSpy = jest
-         .spyOn(publisher, 'publish')
-         .mockResolvedValue(undefined);
+      mockPublish.mockClear();
 
       await publisher.publishProgress('chapter-2', 64, 10, { force: true });
       await publisher.publishProgress('chapter-2', 64, 11);
       await publisher.publishProgress('chapter-2', 64, 15, { force: true });
 
-      expect(publishSpy).toHaveBeenCalledTimes(2);
-      publishSpy.mockRestore();
+      expect(mockPublish).toHaveBeenCalledTimes(2);
    });
 });

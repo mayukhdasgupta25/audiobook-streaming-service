@@ -64,13 +64,11 @@ export class TranscodingEventPublisher {
          redisLogger.error({ err: error, chapterId, channel }, 'Failed to publish transcoding event');
       }
 
-      if (options?.force || event.status !== 'processing') {
-         const key = `${chapterId}:${event.bitrate}`;
-         this.throttleMap.set(key, {
-            lastPublishedAt: Date.now(),
-            lastProgress: event.progress,
-         });
-      }
+      const key = `${chapterId}:${event.bitrate}`;
+      this.throttleMap.set(key, {
+         lastPublishedAt: Date.now(),
+         lastProgress: event.progress,
+      });
    }
 
    async publishProgress(
