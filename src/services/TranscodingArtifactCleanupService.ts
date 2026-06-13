@@ -22,8 +22,8 @@ export class TranscodingArtifactCleanupService {
          await fs.rm(localDir, { recursive: true, force: true });
          logger.info({ chapterId, localDir }, 'Removed local HLS artifacts for chapter');
       } catch (error: unknown) {
-         const nodeError = error as NodeJS.ErrnoException;
-         if (nodeError.code !== 'ENOENT') {
+         const code = (error as { code?: string }).code;
+         if (code !== 'ENOENT') {
             throw error;
          }
       }
