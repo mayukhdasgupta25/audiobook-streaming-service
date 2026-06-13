@@ -55,7 +55,6 @@ export class TranscodingEventPublisher {
    async publish(
       chapterId: string,
       event: TranscodingEvent,
-      options?: { force?: boolean }
    ): Promise<void> {
       const channel = TranscodingEventPublisher.channelForChapter(chapterId);
       try {
@@ -102,7 +101,7 @@ export class TranscodingEventPublisher {
       errorMessage?: string
    ): Promise<void> {
       const event = this.buildEvent(chapterId, bitrate, status, progress, errorMessage);
-      await this.publish(chapterId, event, { force: true });
+      await this.publish(chapterId, event);
    }
 
    createSubscriber(): Redis {
