@@ -56,20 +56,90 @@ const options: swaggerJsdoc.Options = {
             },
             StreamingStatus: {
                type: 'object',
-               required: ['chapterId', 'availableBitrates', 'transcodingStatus', 'canStream'],
+               required: ['chapterId', 'availableBitrates', 'transcodingStatus', 'canStream', 'aggregateStatus', 'bitrates'],
                properties: {
                   chapterId: { type: 'string', example: 'cchapter1234567890abcdef' },
-                  availableBitrates: { type: 'array', items: { type: 'integer' }, example: [64, 128, 192] },
+                  availableBitrates: { type: 'array', items: { type: 'integer' }, example: [64, 128, 256] },
                   transcodingStatus: {
                      type: 'string',
-                     example: 'completed',
-                     description: 'Transcoding job status (e.g. not_started, pending, completed, failed)',
+                     example: 'processing',
+                     description: 'Aggregate transcoding status',
                   },
-                  canStream: { type: 'boolean', example: true },
+                  aggregateStatus: {
+                     type: 'string',
+                     enum: ['not_started', 'processing', 'completed', 'partial', 'failed'],
+                     example: 'processing',
+                  },
+                  canStream: { type: 'boolean', example: false },
+                  masterPlaylistReady: { type: 'boolean', example: false },
                   estimatedBandwidth: {
                      type: 'integer',
                      example: 192000,
                      description: 'Estimated bandwidth in bps; 0 when no bitrates available',
+                  },
+                  bitrates: {
+                     type: 'array',
+                     items: { $ref: '#/components/schemas/BitrateTranscodingStatus' },
+                  },
+               },
+            },
+            BitrateTranscodingStatus: {
+               type: 'object',
+               required: ['bitrate', 'status', 'progress'],
+               properties: {
+                  bitrate: { type: 'integer', example: 128 },
+                  status: {
+                     type: 'string',
+                     enum: ['pending', 'processing', 'completed', 'failed'],
+                     example: 'processing',
+                  },
+                  progress: { type: 'number', example: 47, minimum: 0, maximum: 100 },
+                  errorMessage: { type: 'string', nullable: true },
+               },
+            },
+            ChapterTranscodingStatusDetail: {
+               type: 'object',
+               required: ['chapterId', 'canStream', 'masterPlaylistReady', 'aggregateStatus', 'bitrates'],
+               properties: {
+                  chapterId: { type: 'string' },
+                  canStream: { type: 'boolean' },
+                  masterPlaylistReady: { type: 'boolean' },
+                  aggregateStatus: {
+                     type: 'string',
+                     enum: ['not_started', 'processing', 'completed', 'partial', 'failed'],
+                  },
+                  bitrates: {
+                     type: 'array',
+                     items: { $ref: '#/components/schemas/BitrateTranscodingStatus' },
+                  },
+               },
+            },
+            TranscodingEvent: {
+               type: 'object',
+               required: ['chapterId', 'bitrate', 'status', 'progress', 'timestamp'],
+               properties: {
+                  chapterId: { type: 'string' },
+                  bitrate: { type: 'integer', example: 128 },
+                  status: {
+                     type: 'string',
+                     enum: ['pending', 'processing', 'completed', 'failed'],
+                  },
+                  progress: { type: 'integer', example: 47 },
+                  errorMessage: { type: 'string', nullable: true },
+                  timestamp: { type: 'string', format: 'date-time' },
+               },
+            },
+            RetryTranscodingRequest: {
+               type: 'object',
+               properties: {
+                  bitrates: {
+                     type: 'array',
+                     items: { type: 'integer' },
+                     description: 'Optional bitrates to retry (defaults to all failed)',
+                  },
+                  inputPath: {
+                     type: 'string',
+                     description: 'Source audio path (injected by app-service proxy)',
                   },
                },
             },

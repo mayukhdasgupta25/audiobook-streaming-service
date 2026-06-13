@@ -3,19 +3,27 @@
  * RabbitMQ consumer for processing audio transcoding jobs
  */
 import { RabbitMQFactory, TranscodingJobData } from '../config/rabbitmq';
+import Bull from 'bull';
 import { BullQueueManager } from '../services/BullQueueManager';
 import { PrismaClient } from '@prisma/client';
 import { config } from '../config/env';
 import { logger } from '../config/logger';
+import { BitrateTranscodingRepository } from '../services/BitrateTranscodingRepository';
+import { TranscodingEventPublisher } from '../services/TranscodingEventPublisher';
+import { TranscodingArtifactCleanupService } from '../services/TranscodingArtifactCleanupService';
 
 export class TranscodingWorker {
    private prisma: PrismaClient;
    private bullQueueManager: BullQueueManager;
    private isRunning = false;
+   private readonly bitrateRepo: BitrateTranscodingRepository;
+   private readonly eventPublisher: TranscodingEventPublisher;
 
    constructor(prisma: PrismaClient) {
       this.prisma = prisma;
       this.bullQueueManager = BullQueueManager.getInstance(prisma);
+      this.bitrateRepo = new BitrateTranscodingRepository(prisma);
+      this.eventPublisher = TranscodingEventPublisher.getInstance();
    }
 
    /**
@@ -97,52 +105,78 @@ export class TranscodingWorker {
          bitrates,
          priority,
          userId,
-         retryCount = 0
+         retryCount = 0,
+         forceRetranscode = false,
       } = jobData;
 
       const { id, filePath } = chapter;
 
-      logger.info({ chapterId: id, bitrates: bitrates.join(','), priority }, 'Processing transcoding job for chapter');
+      logger.info({ chapterId: id, bitrates: bitrates.join(','), priority, forceRetranscode }, 'Processing transcoding job for chapter');
 
       try {
          if (!chapter.id) {
             throw new Error(`Chapter ${chapter.id} not found`);
          }
 
-         // Check if chapter is already transcoded for all requested bitrates
-         const existingTranscoded = await this.prisma.transcodedChapter.findMany({
-            where: {
-               chapterId: chapter.id,
-               bitrate: { in: bitrates },
-               status: 'completed'
-            },
-            select: { bitrate: true }
-         });
+         let targetBitrates = bitrates;
 
-         const existingBitrates = existingTranscoded.map(tc => tc.bitrate);
-         const remainingBitrates = bitrates.filter(bitrate => !existingBitrates.includes(bitrate));
+         if (forceRetranscode) {
+            await this.bullQueueManager.removeJobsForChapter(chapter.id);
+            await this.bitrateRepo.resetAllForRetranscode(chapter.id, bitrates);
+            this.eventPublisher.clearThrottle(chapter.id);
+            for (const bitrate of bitrates) {
+               await this.eventPublisher.publishStatusTransition(chapter.id, bitrate, 'pending', 0);
+            }
+            TranscodingArtifactCleanupService.scheduleChapterArtifactCleanup(chapter.id);
+         } else {
+            const existingTranscoded = await this.prisma.transcodedChapter.findMany({
+               where: {
+                  chapterId: chapter.id,
+                  bitrate: { in: bitrates },
+                  status: 'completed',
+                  storageCommitted: true,
+               },
+               select: { bitrate: true },
+            });
 
-         if (remainingBitrates.length === 0) {
-            logger.info({ chapterId: chapter.id }, 'Chapter already transcoded for all requested bitrates');
-            return;
+            const existingBitrates = existingTranscoded.map(tc => tc.bitrate);
+            targetBitrates = bitrates.filter(bitrate => !existingBitrates.includes(bitrate));
+
+            if (targetBitrates.length === 0) {
+               logger.info({ chapterId: chapter.id }, 'Chapter already transcoded for all requested bitrates');
+               return;
+            }
          }
 
-         // Create transcoding job record
-         await this.prisma.transcodingJob.create({
-            data: {
-               chapterId: chapter.id,
-               status: 'processing',
-               progress: 0,
-               startedAt: new Date()
-            }
+         const existingJob = await this.prisma.transcodingJob.findFirst({
+            where: { chapterId: chapter.id },
+            orderBy: { createdAt: 'desc' },
          });
+         if (!existingJob || forceRetranscode) {
+            await this.prisma.transcodingJob.create({
+               data: {
+                  chapterId: chapter.id,
+                  status: 'processing',
+                  progress: 0,
+                  startedAt: new Date(),
+               },
+            });
+         } else {
+            await this.prisma.transcodingJob.update({
+               where: { id: existingJob.id },
+               data: { status: 'processing', progress: 0, startedAt: new Date(), completedAt: null },
+            });
+         }
 
-         // Prepare transcoding options - store under bit_transcode/{chapter_id}/{bitrate}k structure
+         await this.bitrateRepo.upsertPending(chapter.id, targetBitrates);
+         for (const bitrate of targetBitrates) {
+            await this.eventPublisher.publishStatusTransition(chapter.id, bitrate, 'pending', 0);
+         }
+
          const outputDir = `bit_transcode/${chapter.id}`;
 
-         // Create Bull jobs for each bitrate
-         const bitrateJobs: any[] = [];
-         for (const bitrate of remainingBitrates) {
+         const bitrateJobs: Bull.Job[] = [];
+         for (const bitrate of targetBitrates) {
             try {
                const job = await this.bullQueueManager.addBitrateTranscodingJob({
                   chapterId: chapter.id,
@@ -167,7 +201,7 @@ export class TranscodingWorker {
                const masterJob = await this.bullQueueManager.addMasterPlaylistJob({
                   chapterId: chapter.id,
                   outputDir,
-                  variantBitrates: remainingBitrates
+                  variantBitrates: targetBitrates,
                }, priority);
 
                logger.info({ chapterId: chapter.id, jobId: masterJob.id }, 'Created master playlist Bull job');

@@ -24,15 +24,18 @@ model StreamingSession {
 
 // Transcoded chapter model for HLS streaming
 model TranscodedChapter {
-   id              String   @id @default(cuid())
-   chapterId       String
-   bitrate         Int // Bitrate in kbps
-   playlistUrl     String // URL to the HLS playlist
-   segmentsPath    String // Path to segments directory
-   storageProvider String // Storage provider used (local, s3, azure, gcs)
-   status          String   @default("pending") // pending, processing, completed, failed
-   createdAt       DateTime @default(now())
-   updatedAt       DateTime @updatedAt
+   id               String   @id @default(cuid())
+   chapterId        String
+   bitrate          Int // Bitrate in kbps
+   playlistUrl      String   @default("") // URL to the HLS playlist
+   segmentsPath     String   @default("") // Path to segments directory
+   storageProvider  String   @default("local") // Storage provider used (local, s3, azure, gcs)
+   status           String   @default("pending") // pending, processing, completed, failed
+   progress         Float    @default(0) // 0-100 during transcoding
+   errorMessage     String?
+   storageCommitted Boolean  @default(false) // DB record finalized before S3 upload
+   createdAt        DateTime @default(now())
+   updatedAt        DateTime @updatedAt
 
    @@unique([chapterId, bitrate])
    @@map("transcoded_chapters")
