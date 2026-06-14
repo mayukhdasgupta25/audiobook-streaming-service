@@ -5,6 +5,7 @@
  * matching the bootstrap logic in src/config/env.ts.
  */
 const dotenv = require('dotenv');
+const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
@@ -21,17 +22,31 @@ function getEnvFileForBootstrap() {
    return ENV_FILE_BY_NODE_ENV[bootstrapEnv] ?? `.env.${bootstrapEnv}`;
 }
 
+function loadEnvFile(filename, override = false) {
+   const filePath = path.resolve(process.cwd(), filename);
+   if (fs.existsSync(filePath)) {
+      dotenv.config({ path: filePath, override });
+   }
+}
+
 function loadEnvFiles() {
+   // Base local env, then environment-specific overrides, then local overrides
+   loadEnvFile('.env');
    const envFile = getEnvFileForBootstrap();
    if (envFile) {
-      dotenv.config({ path: path.resolve(process.cwd(), envFile) });
+      loadEnvFile(envFile, true);
    }
+   loadEnvFile('.env.local', true);
 }
 
 loadEnvFiles();
 
 if (!process.env.DATABASE_URL) {
-   console.error('DATABASE_URL is not set. Ensure the correct .env.{NODE_ENV} file exists.');
+   const nodeEnv = process.env.NODE_ENV ?? 'development';
+   const envFile = getEnvFileForBootstrap();
+   console.error('DATABASE_URL is not set.');
+   console.error(`Checked: .env${envFile ? `, ${envFile}` : ''}, .env.local (NODE_ENV=${nodeEnv})`);
+   console.error('Copy .env.example to .env.development or set DATABASE_URL in .env');
    process.exit(1);
 }
 

@@ -21,7 +21,7 @@ process.env['BULL_JOB_TIMEOUT'] = '3600000';
 process.env['BULL_MAX_ATTEMPTS'] = '3';
 process.env['BULL_BACKOFF_DELAY'] = '30000';
 
-process.env['STORAGE_PROVIDER'] = 'local';
+process.env['STORAGE_PROVIDER'] = 's3';
 process.env['LOCAL_STORAGE_PATH'] = './storage';
 process.env['AWS_S3_BUCKET'] = '';
 process.env['AWS_S3_REGION'] = '';

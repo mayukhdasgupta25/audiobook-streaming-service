@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { StreamingController } from '../controllers/StreamingController';
+import { TranscodingEventsController } from '../controllers/TranscodingEventsController';
 import { authenticateJWT } from '../middleware/authenticateJWT';
 
 /**
@@ -9,6 +10,7 @@ import { authenticateJWT } from '../middleware/authenticateJWT';
 export const createStreamingRoutes = (prisma: PrismaClient) => {
    const router = require('express').Router();
    const streamingController = new StreamingController(prisma);
+   const transcodingEventsController = new TranscodingEventsController(prisma);
 
    router.use(authenticateJWT);
    // HLS Master playlist endpoint
@@ -22,6 +24,16 @@ export const createStreamingRoutes = (prisma: PrismaClient) => {
 
    // Status endpoint
    router.get('/chapters/:chapterId/status', streamingController.getStreamingStatus);
+
+   // Detailed transcoding status
+   router.get('/chapters/:chapterId/transcoding', transcodingEventsController.getDetailedTranscodingStatus);
+
+   // SSE transcoding events
+   router.get('/chapters/:chapterId/transcoding/events', transcodingEventsController.getChapterTranscodingEvents);
+   router.get('/transcoding/events', transcodingEventsController.getMultiplexedTranscodingEvents);
+
+   // Retry failed bitrates
+   router.post('/chapters/:chapterId/transcode/retry', transcodingEventsController.retryTranscoding);
 
    // Preload endpoint
    router.post('/chapters/:chapterId/preload', streamingController.preloadChapter);

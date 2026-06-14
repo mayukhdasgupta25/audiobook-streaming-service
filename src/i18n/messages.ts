@@ -9,18 +9,20 @@ export interface MessageParams {
 }
 
 export interface MessageCatalog {
-   streaming: {
-      status_retrieved: string;
-      preloaded: string;
-      analytics_retrieved: string;
-      no_bitrates_available: string;
-      preload_failed: string;
-   };
-   validation: {
-      invalid_bitrate: string;
-      invalid_chapter_id: string;
-      missing_parameters: string;
-   };
+      streaming: {
+         status_retrieved: string;
+         preloaded: string;
+         analytics_retrieved: string;
+         no_bitrates_available: string;
+         preload_failed: string;
+         retry_initiated: string;
+      };
+      validation: {
+         invalid_bitrate: string;
+         invalid_chapter_id: string;
+         missing_parameters: string;
+         invalid_request: string;
+      };
    unauthorized: {
       not_authenticated: string;
       access_denied: string;
@@ -48,12 +50,14 @@ const messages: Record<string, MessageCatalog> = {
          preloaded: 'Chapter preloaded successfully',
          analytics_retrieved: 'Analytics retrieved successfully',
          no_bitrates_available: 'No transcoded bitrates available for this chapter',
-         preload_failed: 'Failed to preload chapter segments'
+         preload_failed: 'Failed to preload chapter segments',
+         retry_initiated: 'Transcoding retry initiated successfully',
       },
       validation: {
          invalid_bitrate: 'Invalid bitrate value provided',
          invalid_chapter_id: 'Invalid chapter ID format',
-         missing_parameters: 'Required parameters are missing'
+         missing_parameters: 'Required parameters are missing',
+         invalid_request: 'Invalid request parameters',
       },
       unauthorized: {
          not_authenticated: 'User not authenticated',

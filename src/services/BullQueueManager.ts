@@ -8,12 +8,14 @@ import {
    QUEUE_NAMES,
    createQueue,
    getAllQueueNames,
+   getBitrateQueueNames,
    getQueueNameForBitrate,
    BitrateTranscodingJobData,
    MasterPlaylistJobData,
    DEFAULT_JOB_OPTIONS
 } from '../config/bull';
 import { bullLogger } from '../config/logger';
+import { chapterSourceFileExists } from '../utils/chapterSourceFile';
 
 export class BullQueueManager {
    private static instance: BullQueueManager;
@@ -47,6 +49,8 @@ export class BullQueueManager {
             bullLogger.info({ queueName }, 'Queue created successfully');
          }
 
+         await this.reconcileStaleJobs();
+
          this.isInitialized = true;
          bullLogger.info('All Bull queues initialized successfully');
       } catch (error: any) {
@@ -78,17 +82,19 @@ export class BullQueueManager {
 
       queue.on('progress', async (job, progress) => {
          bullLogger.debug({ jobId: job.id, progress, queueName }, 'Job progress');
-         await this.updateJobStatus(job.data.chapterId, 'processing', progress);
+         // Per-bitrate progress is tracked in transcoded_chapters via TranscodingService
       });
 
       queue.on('completed', async (job) => {
          bullLogger.info({ jobId: job.id, queueName }, 'Job completed in queue');
-         await this.updateJobStatus(job.data.chapterId, 'completed', 100);
+         // Chapter-level completion is handled by MasterPlaylistProcessor
       });
 
       queue.on('failed', async (job, err) => {
          bullLogger.error({ err, jobId: job.id, queueName }, 'Job failed in queue');
-         await this.updateJobStatus(job.data.chapterId, 'failed', 0, err.message);
+         if (queueName === QUEUE_NAMES.MASTER_PLAYLIST) {
+            await this.updateJobStatus(job.data.chapterId, 'failed', 0, err.message);
+         }
       });
 
       queue.on('paused', () => {
@@ -199,6 +205,154 @@ export class BullQueueManager {
          return null;
       }
       return await queue.getJob(jobId);
+   }
+
+   public async removeJobsForChapter(chapterId: string): Promise<void> {
+      for (const [queueName, queue] of this.queues) {
+         const jobs = await queue.getJobs(['active', 'waiting', 'delayed', 'failed']);
+         for (const job of jobs) {
+            if (job.data?.chapterId === chapterId) {
+               try {
+                  await job.remove();
+                  bullLogger.info({ jobId: job.id, queueName, chapterId }, 'Removed Bull job for chapter');
+               } catch (error: unknown) {
+                  bullLogger.warn({ err: error, jobId: job.id, chapterId }, 'Failed to remove Bull job');
+               }
+            }
+         }
+      }
+   }
+
+   /**
+    * Remove orphaned master jobs and retry failed bitrate jobs when source audio is available.
+    */
+   private async reconcileStaleJobs(): Promise<void> {
+      try {
+         await this.removeOrphanedMasterJobs();
+         await this.retryFailedBitrateJobsWithAvailableSource();
+      } catch (error: unknown) {
+         bullLogger.warn({ err: error }, 'Failed to reconcile stale Bull jobs on startup');
+      }
+   }
+
+   private async removeOrphanedMasterJobs(): Promise<void> {
+      const masterQueue = this.queues.get(QUEUE_NAMES.MASTER_PLAYLIST);
+      if (!masterQueue) {
+         return;
+      }
+
+      const jobs = await masterQueue.getJobs(['waiting', 'delayed', 'active']);
+      for (const job of jobs) {
+         const { chapterId, variantBitrates } = job.data as MasterPlaylistJobData;
+         if (!chapterId || !variantBitrates?.length) {
+            continue;
+         }
+
+         if (await this.hasActiveBitrateJobsForChapter(chapterId)) {
+            continue;
+         }
+
+         const rows = await this.prisma.transcodedChapter.findMany({
+            where: { chapterId, bitrate: { in: variantBitrates } },
+            select: { bitrate: true, status: true },
+         });
+
+         const allFailed = variantBitrates.every(
+            bitrate => rows.find(row => row.bitrate === bitrate)?.status === 'failed'
+         );
+         const allCompleted = variantBitrates.every(
+            bitrate => rows.find(row => row.bitrate === bitrate)?.status === 'completed'
+         );
+
+         if (allFailed || allCompleted) {
+            await job.remove();
+            bullLogger.info(
+               { jobId: job.id, chapterId, allFailed, allCompleted },
+               'Removed orphaned master playlist job'
+            );
+         }
+      }
+   }
+
+   private async hasActiveBitrateJobsForChapter(chapterId: string): Promise<boolean> {
+      for (const queueName of getBitrateQueueNames()) {
+         const queue = this.queues.get(queueName);
+         if (!queue) {
+            continue;
+         }
+
+         const jobs = await queue.getJobs(['active', 'waiting', 'delayed']);
+         if (jobs.some(job => job.data?.chapterId === chapterId)) {
+            return true;
+         }
+      }
+
+      return false;
+   }
+
+   private async retryFailedBitrateJobsWithAvailableSource(): Promise<void> {
+      const chaptersNeedingMaster = new Map<string, { outputDir: string; bitrates: number[] }>();
+
+      for (const queueName of getBitrateQueueNames()) {
+         const queue = this.queues.get(queueName);
+         if (!queue) {
+            continue;
+         }
+
+         const failedJobs = await queue.getJobs(['failed']);
+         for (const job of failedJobs) {
+            const data = job.data as BitrateTranscodingJobData | undefined;
+            if (!data?.chapterId || !data.inputPath || !data.bitrate) {
+               continue;
+            }
+
+            if (!(await chapterSourceFileExists(data.inputPath))) {
+               continue;
+            }
+
+            await this.prisma.transcodedChapter.updateMany({
+               where: {
+                  chapterId: data.chapterId,
+                  bitrate: data.bitrate,
+                  status: 'failed',
+               },
+               data: {
+                  status: 'pending',
+                  progress: 0,
+                  errorMessage: null,
+               },
+            });
+
+            await job.retry();
+            bullLogger.info(
+               { jobId: job.id, chapterId: data.chapterId, bitrate: data.bitrate, queueName },
+               'Retrying failed bitrate job after source file became available'
+            );
+
+            const existing = chaptersNeedingMaster.get(data.chapterId);
+            if (existing) {
+               if (!existing.bitrates.includes(data.bitrate)) {
+                  existing.bitrates.push(data.bitrate);
+               }
+            } else {
+               chaptersNeedingMaster.set(data.chapterId, {
+                  outputDir: data.outputDir,
+                  bitrates: [data.bitrate],
+               });
+            }
+         }
+      }
+
+      for (const [chapterId, { outputDir, bitrates }] of chaptersNeedingMaster) {
+         await this.addMasterPlaylistJob(
+            {
+               chapterId,
+               outputDir,
+               variantBitrates: bitrates.sort((a, b) => a - b),
+            },
+            'normal'
+         );
+      }
    }
 
    public async retryJob(queueName: string, jobId: string): Promise<void> {

@@ -6,6 +6,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { StorageProvider, FileMetadata } from './StorageProvider';
 import { logger } from '../../config/logger';
+import { resolveStorageCandidateKeys } from '../../utils/storageKeys';
 
 export class LocalStorageProvider implements StorageProvider {
    private basePath: string;
@@ -51,8 +52,8 @@ export class LocalStorageProvider implements StorageProvider {
     */
    async downloadFile(filePath: string): Promise<Buffer> {
       try {
-         const fullPath = path.join(this.basePath, filePath);
-         return await fs.readFile(fullPath);
+         const resolvedPath = await this.resolveExistingPath(filePath);
+         return await fs.readFile(resolvedPath);
       } catch (error: any) {
          logger.error({ err: error }, 'Error downloading file from local storage');
          throw new Error(`Failed to download file: ${error.message}`);
@@ -83,6 +84,27 @@ export class LocalStorageProvider implements StorageProvider {
    }
 
    /**
+    * Delete all files under a local storage prefix
+    */
+   async deleteFilesByPrefix(prefix: string): Promise<number> {
+      const localDir = path.join(this.basePath, prefix.replace(/\/+$/, ''));
+
+      try {
+         const entries = await fs.readdir(localDir, { withFileTypes: true, recursive: true });
+         const fileCount = entries.filter(entry => entry.isFile()).length;
+         await fs.rm(localDir, { recursive: true, force: true });
+         return fileCount;
+      } catch (error: unknown) {
+         const code = (error as { code?: string }).code;
+         if (code === 'ENOENT') {
+            return 0;
+         }
+         logger.error({ err: error, prefix }, 'Error deleting files by prefix from local storage');
+         throw error;
+      }
+   }
+
+   /**
     * Get a public URL for a file (for local storage, this is just the file path)
     */
    async getFileUrl(filePath: string): Promise<string> {
@@ -96,12 +118,28 @@ export class LocalStorageProvider implements StorageProvider {
     */
    async fileExists(filePath: string): Promise<boolean> {
       try {
-         const fullPath = path.join(this.basePath, filePath);
-         await fs.access(fullPath);
+         await this.resolveExistingPath(filePath);
          return true;
       } catch {
          return false;
       }
+   }
+
+   private async resolveExistingPath(filePath: string): Promise<string> {
+      const candidateKeys = resolveStorageCandidateKeys(filePath);
+      let lastError: unknown;
+
+      for (const key of candidateKeys) {
+         const fullPath = path.join(this.basePath, key);
+         try {
+            await fs.access(fullPath);
+            return fullPath;
+         } catch (error) {
+            lastError = error;
+         }
+      }
+
+      throw lastError ?? new Error(`File not found: ${filePath}`);
    }
 
    /**

@@ -23,6 +23,7 @@ export interface TranscodingJobData {
    priority: 'low' | 'normal' | 'high';
    userId?: string;
    retryCount?: number;
+   forceRetranscode?: boolean;
 }
 
 export interface ChapterDeletionMessage {

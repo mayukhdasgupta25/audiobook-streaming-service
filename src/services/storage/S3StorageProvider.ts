@@ -2,7 +2,16 @@
  * AWS S3 Storage Provider
  * Implements StorageProvider interface for AWS S3 storage
  */
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command, CopyObjectCommand } from '@aws-sdk/client-s3';
+import {
+   S3Client,
+   PutObjectCommand,
+   GetObjectCommand,
+   DeleteObjectCommand,
+   DeleteObjectsCommand,
+   HeadObjectCommand,
+   ListObjectsV2Command,
+   CopyObjectCommand,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { StorageProvider, FileMetadata } from './StorageProvider';
 import { config } from '../../config/env';
@@ -116,6 +125,58 @@ export class S3StorageProvider implements StorageProvider {
       } catch (error: any) {
          logger.error({ err: error }, 'Error deleting file from S3');
          return false;
+      }
+   }
+
+   /**
+    * Delete all objects under an S3 prefix
+    */
+   async deleteFilesByPrefix(prefix: string): Promise<number> {
+      const normalizedPrefix = prefix.endsWith('/') ? prefix : `${prefix}/`;
+      let deletedCount = 0;
+      let continuationToken: string | undefined;
+
+      try {
+         do {
+            const listResponse = await this.s3Client.send(
+               new ListObjectsV2Command({
+                  Bucket: this.bucket,
+                  Prefix: normalizedPrefix,
+                  ContinuationToken: continuationToken,
+               })
+            );
+
+            const keys = (listResponse.Contents ?? [])
+               .map(obj => obj.Key)
+               .filter((key): key is string => Boolean(key));
+
+            for (let i = 0; i < keys.length; i += 1000) {
+               const batch = keys.slice(i, i + 1000);
+               if (batch.length === 0) {
+                  continue;
+               }
+
+               await this.s3Client.send(
+                  new DeleteObjectsCommand({
+                     Bucket: this.bucket,
+                     Delete: {
+                        Objects: batch.map(Key => ({ Key })),
+                        Quiet: true,
+                     },
+                  })
+               );
+               deletedCount += batch.length;
+            }
+
+            continuationToken = listResponse.IsTruncated
+               ? listResponse.NextContinuationToken
+               : undefined;
+         } while (continuationToken);
+
+         return deletedCount;
+      } catch (error: unknown) {
+         logger.error({ err: error, prefix: normalizedPrefix }, 'Error deleting files by prefix from S3');
+         throw error;
       }
    }
 

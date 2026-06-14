@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
 
 const LOCALHOST_PATTERN = /localhost|127\.0\.0\.1/i;
@@ -16,11 +17,20 @@ function getEnvFileForBootstrap(): string | null {
    return ENV_FILE_BY_NODE_ENV[bootstrapEnv] ?? `.env.${bootstrapEnv}`;
 }
 
+function loadEnvFile(filename: string, override = false): void {
+   const filePath = path.resolve(process.cwd(), filename);
+   if (fs.existsSync(filePath)) {
+      dotenv.config({ path: filePath, override });
+   }
+}
+
 function loadEnvFiles(): void {
+   loadEnvFile('.env');
    const envFile = getEnvFileForBootstrap();
    if (envFile) {
-      dotenv.config({ path: path.resolve(process.cwd(), envFile) });
+      loadEnvFile(envFile, true);
    }
+   loadEnvFile('.env.local', true);
 }
 
 function requireEnv(key: string): string {
