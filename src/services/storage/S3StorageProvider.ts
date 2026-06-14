@@ -25,23 +25,14 @@ export class S3StorageProvider implements StorageProvider {
    constructor(
       bucket: string,
       region: string,
-      accessKeyId?: string,
-      secretAccessKey?: string,
       endpoint?: string
    ) {
       this.bucket = bucket;
       this.region = region;
 
-      const s3Config: any = {
+      const s3Config: { region: string; endpoint?: string } = {
          region: this.region,
       };
-
-      if (accessKeyId && secretAccessKey) {
-         s3Config.credentials = {
-            accessKeyId,
-            secretAccessKey,
-         };
-      }
 
       if (endpoint) {
          s3Config.endpoint = endpoint;

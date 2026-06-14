@@ -29,8 +29,6 @@ export class StorageFactory {
             provider: config.STORAGE_PROVIDER as 'local' | 's3',
             bucket: config.AWS_S3_BUCKET,
             region: config.AWS_S3_REGION,
-            accessKeyId: config.AWS_ACCESS_KEY_ID,
-            secretAccessKey: config.AWS_SECRET_ACCESS_KEY,
             basePath: config.LOCAL_STORAGE_PATH,
          };
 
@@ -45,8 +43,6 @@ export class StorageFactory {
                this.storageProvider = new S3StorageProvider(
                   storageConfig.bucket,
                   config.AWS_S3_REGION,
-                  config.AWS_ACCESS_KEY_ID,
-                  config.AWS_SECRET_ACCESS_KEY,
                   config.AWS_S3_ENDPOINT || undefined
                );
                break;
