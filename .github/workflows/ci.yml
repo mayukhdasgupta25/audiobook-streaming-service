@@ -76,6 +76,7 @@ jobs:
           REDIS_URL: redis://localhost:6379
           REDIS_PASSWORD: ""
           RABBITMQ_URL: amqp://localhost:5672
+          RABBITMQ_QUEUE_PREFIX: audiobook
           RABBITMQ_MESSAGE_TTL: "3600000"
           BULL_REDIS_HOST: redis://localhost:6379
           BULL_JOB_TIMEOUT: "3600000"
@@ -122,6 +123,7 @@ jobs:
           REDIS_URL: redis://localhost:6379
           REDIS_PASSWORD: ""
           RABBITMQ_URL: amqp://localhost:5672
+          RABBITMQ_QUEUE_PREFIX: audiobook
           RABBITMQ_MESSAGE_TTL: "3600000"
           BULL_REDIS_HOST: redis://localhost:6379
           BULL_JOB_TIMEOUT: "3600000"

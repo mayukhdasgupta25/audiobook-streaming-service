@@ -56,3 +56,24 @@ export async function resolveExistingStorageKey(
 
    return null;
 }
+
+/**
+ * Candidate S3 prefixes for bit_transcode artifact cleanup.
+ * Covers canonical uploads/ prefix and legacy keys without it.
+ */
+export function resolveBitTranscodeDeletionPrefixes(chapterId: string): string[] {
+   const base = `bit_transcode/${chapterId}`;
+   const canonical = toStorageKey(base);
+   const withUploadsPrefix = canonical.startsWith('uploads/')
+      ? canonical
+      : `uploads/${canonical}`;
+   const withoutUploadsPrefix = base;
+   const legacyLeadingSlash = `/${withUploadsPrefix}`;
+
+   return [...new Set([
+      canonical,
+      withUploadsPrefix,
+      withoutUploadsPrefix,
+      legacyLeadingSlash,
+   ].filter((prefix) => prefix.length > 0))];
+}

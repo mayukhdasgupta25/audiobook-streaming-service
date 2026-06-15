@@ -1,6 +1,7 @@
 import {
    resolveStorageCandidateKeys,
    resolveExistingStorageKey,
+   resolveBitTranscodeDeletionPrefixes,
 } from '../../src/utils/storageKeys';
 import { StorageProvider } from '../../src/services/storage/StorageProvider';
 
@@ -20,6 +21,20 @@ describe('storageKeys', () => {
                'uploads/chapters/audio-1.mp3',
                '/uploads/chapters/audio-1.mp3',
                'chapters/audio-1.mp3',
+            ]),
+         );
+      });
+   });
+
+   describe('resolveBitTranscodeDeletionPrefixes', () => {
+      it('includes canonical and legacy prefixes for chapter artifacts', () => {
+         const prefixes = resolveBitTranscodeDeletionPrefixes('chapter-1');
+
+         expect(prefixes).toEqual(
+            expect.arrayContaining([
+               'uploads/bit_transcode/chapter-1',
+               'bit_transcode/chapter-1',
+               '/uploads/bit_transcode/chapter-1',
             ]),
          );
       });

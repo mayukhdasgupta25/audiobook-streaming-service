@@ -26,4 +26,21 @@ describe('BitrateTranscodingRepository', () => {
       expect(result.playlistUrl).toContain('chapter-1');
       expect(result.playlistUrl).toContain('128k');
    });
+
+   it('markStoredOnS3 sets storage provider and progress to 100', async () => {
+      const update = jest.fn().mockResolvedValue({});
+      const prisma = {
+         transcodedChapter: { update },
+      } as unknown as ConstructorParameters<typeof BitrateTranscodingRepository>[0];
+
+      const repo = new BitrateTranscodingRepository(prisma);
+      await repo.markStoredOnS3('chapter-1', 128);
+
+      expect(update).toHaveBeenCalledWith({
+         where: { chapterId_bitrate: { chapterId: 'chapter-1', bitrate: 128 } },
+         data: expect.objectContaining({
+            progress: 100,
+         }),
+      });
+   });
 });
