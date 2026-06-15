@@ -50,6 +50,18 @@ function requireIntEnv(key: string): number {
    return parsed;
 }
 
+function requireOptionalIntEnv(key: string, defaultValue: number): number {
+   const raw = process.env[key];
+   if (raw === undefined || raw.trim() === '') {
+      return defaultValue;
+   }
+   const parsed = parseInt(raw, 10);
+   if (Number.isNaN(parsed)) {
+      throw new Error(`Environment variable ${key} must be a valid integer`);
+   }
+   return parsed;
+}
+
 function parseTranscodingBitrates(raw: string): number[] {
    const envValue = raw.trim();
 
@@ -151,6 +163,9 @@ const HEALTH_SUPPORT_EMAIL = requireEnv('HEALTH_SUPPORT_EMAIL');
 const HEALTH_SUPPORT_PASSWORD = requireEnv('HEALTH_SUPPORT_PASSWORD');
 validateHealthSupportEmail(HEALTH_SUPPORT_EMAIL);
 
+const AWS_SIGNED_URL_EXPIRES_IN = requireIntEnv('AWS_SIGNED_URL_EXPIRES_IN');
+const HLS_PRESIGNED_URL_EXPIRES_IN = requireOptionalIntEnv('HLS_PRESIGNED_URL_EXPIRES_IN', 7200);
+
 export const config = {
    NODE_ENV: nodeEnv,
    PORT: requireIntEnv('PORT'),
@@ -176,7 +191,8 @@ export const config = {
    AWS_S3_BUCKET: requireEnv('AWS_S3_BUCKET'),
    AWS_S3_REGION: requireEnv('AWS_S3_REGION'),
    AWS_S3_ENDPOINT: requireEnv('AWS_S3_ENDPOINT'),
-   AWS_SIGNED_URL_EXPIRES_IN: requireIntEnv('AWS_SIGNED_URL_EXPIRES_IN'),
+   AWS_SIGNED_URL_EXPIRES_IN,
+   HLS_PRESIGNED_URL_EXPIRES_IN,
 
    FFMPEG_PATH: requireEnv('FFMPEG_PATH'),
    FFPROBE_PATH: requireEnv('FFPROBE_PATH'),

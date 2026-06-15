@@ -225,10 +225,14 @@ export class StreamingController {
 
       const response = await this.streamingService.getSegment(chapterId, bitrate, segmentId);
 
-      // Set response headers
       Object.entries(response.headers).forEach(([key, value]) => {
          res.setHeader(key, value);
       });
+
+      if (response.statusCode === 302 && response.headers['Location']) {
+         res.redirect(302, response.headers['Location']);
+         return;
+      }
 
       res.status(response.statusCode).send(response.content);
    });
