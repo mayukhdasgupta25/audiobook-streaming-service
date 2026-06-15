@@ -123,6 +123,7 @@ export class BitrateTranscodingRepository {
          where: { chapterId_bitrate: { chapterId, bitrate } },
          data: {
             storageProvider: config.STORAGE_PROVIDER,
+            progress: 100,
             updatedAt: new Date(),
          },
       });

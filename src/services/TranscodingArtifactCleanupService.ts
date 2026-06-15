@@ -4,7 +4,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { config } from '../config/env';
-import { toStorageKey } from '../utils/storageKeys';
+import { resolveBitTranscodeDeletionPrefixes, toStorageKey } from '../utils/storageKeys';
 import { logger } from '../config/logger';
 import { StorageFactory } from './storage/StorageFactory';
 
@@ -36,13 +36,19 @@ export class TranscodingArtifactCleanupService {
          return;
       }
 
-      try {
-         const storageProvider = StorageFactory.getStorageProvider();
-         const deletedCount = await storageProvider.deleteFilesByPrefix(prefix);
-         logger.info({ chapterId, prefix, deletedCount }, 'Removed S3 HLS artifacts for chapter');
-      } catch (error: unknown) {
-         logger.error({ err: error, chapterId, prefix }, 'Failed to remove S3 HLS artifacts for chapter');
-         throw error;
+      await StorageFactory.initialize();
+      const storageProvider = StorageFactory.getStorageProvider();
+      const prefixes = resolveBitTranscodeDeletionPrefixes(chapterId);
+      let deletedCount = 0;
+
+      for (const candidatePrefix of prefixes) {
+         deletedCount += await storageProvider.deleteFilesByPrefix(candidatePrefix);
+      }
+
+      if (deletedCount === 0) {
+         logger.warn({ chapterId, prefixes }, 'No S3 HLS artifacts found for chapter during cleanup');
+      } else {
+         logger.info({ chapterId, prefixes, deletedCount }, 'Removed S3 HLS artifacts for chapter');
       }
    }
 }

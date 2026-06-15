@@ -3,7 +3,7 @@
  * RabbitMQ consumer for processing chapter deletion messages
  * Cleans up transcoding jobs, cache, storage artifacts, and DB records
  */
-import { RabbitMQFactory, ChapterDeletionMessage } from '../config/rabbitmq';
+import { RabbitMQFactory, ChapterDeletionMessage, getChapterDeletionQueueName } from '../config/rabbitmq';
 import { PrismaClient } from '@prisma/client';
 import { logger } from '../config/logger';
 import { BullQueueManager } from '../services/BullQueueManager';
@@ -65,13 +65,13 @@ export class ChapterDeletionWorker {
          const rabbitMQ = RabbitMQFactory.getConnection();
 
          await rabbitMQ.consume<ChapterDeletionMessage>(
-            'audiobook.chapters.deleted',
+            getChapterDeletionQueueName(),
             async (messageData: ChapterDeletionMessage, message) => {
                await this.processChapterDeletion(messageData, message);
             }
          );
 
-         logger.info('Started consuming chapter deletion messages from audiobook.chapters.deleted');
+         logger.info({ queueName: getChapterDeletionQueueName() }, 'Started consuming chapter deletion messages');
       } catch (error: unknown) {
          logger.error({ err: error }, 'Error starting consumer for chapter deletion queue');
          throw error;
@@ -106,11 +106,7 @@ export class ChapterDeletionWorker {
             logger.warn({ err: error, chapterId }, 'Failed to clear streaming cache for deleted chapter');
          }
 
-         try {
-            await TranscodingArtifactCleanupService.cleanupChapterArtifacts(chapterId);
-         } catch (error: unknown) {
-            logger.warn({ err: error, chapterId }, 'Failed to remove HLS artifacts for deleted chapter');
-         }
+         await TranscodingArtifactCleanupService.cleanupChapterArtifacts(chapterId);
 
          const transcodingJobsResult = await this.prisma.transcodingJob.deleteMany({
             where: { chapterId },
@@ -146,7 +142,7 @@ export class ChapterDeletionWorker {
    }> {
       return {
          isRunning: this.isRunning,
-         queueName: 'audiobook.chapters.deleted',
+         queueName: getChapterDeletionQueueName(),
       };
    }
 
