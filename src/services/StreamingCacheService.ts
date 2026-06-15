@@ -7,6 +7,7 @@ import { StorageProvider } from './storage/StorageProvider';
 import { StorageFactory } from './storage/StorageFactory';
 import { config } from '../config/env';
 import { toStorageKey } from '../utils/storageKeys';
+import { isDevelopmentStreaming } from '../utils/streamingStorage';
 import { redisLogger } from '../config/logger';
 
 export interface CacheStats {
@@ -174,6 +175,10 @@ export class StreamingCacheService {
       playlistContent: string,
       isMaster: boolean = false
    ): Promise<boolean> {
+      if (!isDevelopmentStreaming()) {
+         return true;
+      }
+
       try {
          const key = isMaster
             ? `stream:playlist:${chapterId}:master`
@@ -181,8 +186,12 @@ export class StreamingCacheService {
 
          const content = Buffer.from(playlistContent, 'utf-8');
          const contentType = 'application/vnd.apple.mpegurl';
+         const ttl = Math.min(
+            config.STREAMING_CACHE_TTL,
+            Math.max(60, config.HLS_PRESIGNED_URL_EXPIRES_IN - 300),
+         );
 
-         return await this.set(key, content, config.STREAMING_CACHE_TTL, contentType);
+         return await this.set(key, content, ttl, contentType);
       } catch (error: any) {
          redisLogger.error({ err: error }, 'Cache playlist error');
          return false;
@@ -197,6 +206,10 @@ export class StreamingCacheService {
       bitrate: number,
       isMaster: boolean = false
    ): Promise<string | null> {
+      if (!isDevelopmentStreaming()) {
+         return null;
+      }
+
       try {
          const key = isMaster
             ? `stream:playlist:${chapterId}:master`
