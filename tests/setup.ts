@@ -27,6 +27,7 @@ process.env['AWS_S3_BUCKET'] = '';
 process.env['AWS_S3_REGION'] = '';
 process.env['AWS_S3_ENDPOINT'] = '';
 process.env['AWS_SIGNED_URL_EXPIRES_IN'] = '3600';
+process.env['HLS_PRESIGNED_URL_EXPIRES_IN'] = '7200';
 
 process.env['FFMPEG_PATH'] = 'ffmpeg';
 process.env['FFPROBE_PATH'] = 'ffprobe';

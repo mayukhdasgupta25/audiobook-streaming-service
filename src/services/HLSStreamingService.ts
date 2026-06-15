@@ -9,6 +9,15 @@ import { StorageFactory } from './storage/StorageFactory';
 import { config } from '../config/env';
 import { logger } from '../config/logger';
 import { DetailedTranscodingService } from './DetailedTranscodingService';
+import {
+   isDevelopmentStreaming,
+   presignMasterPlaylistUrls,
+   presignVariantPlaylistUrls,
+   getMasterPlaylistResponseCacheControl,
+   getPlaylistResponseCacheControl,
+   buildVariantStorageKey,
+   getPresignedObjectUrl,
+} from '../utils/streamingStorage';
 
 export interface StreamingOptions {
    chapterId: string;
@@ -80,14 +89,15 @@ export class HLSStreamingService {
             preferredBitrate
          );
 
-         // Cache the master playlist
-         await this.cacheService.cachePlaylist(chapterId, 0, masterPlaylistInfo.masterPlaylist, true);
+         if (isDevelopmentStreaming()) {
+            await this.cacheService.cachePlaylist(chapterId, 0, masterPlaylistInfo.masterPlaylist, true);
+         }
 
          return {
             contentType: 'application/vnd.apple.mpegurl',
             content: masterPlaylistInfo.masterPlaylist,
             headers: {
-               'Cache-Control': 'public, max-age=300', // 5 minutes
+               'Cache-Control': getMasterPlaylistResponseCacheControl(),
                'Access-Control-Allow-Origin': '*',
                'Access-Control-Allow-Headers': 'Range, Content-Range'
             },
@@ -128,22 +138,23 @@ export class HLSStreamingService {
             return this.createErrorResponse('Transcoded version not available', 404);
          }
 
-         // Try to get from cache first
-         let playlistContent = await this.cacheService.getCachedPlaylist(chapterId, bitrate);
+         let playlistContent: string;
 
-         if (!playlistContent) {
-            // Generate playlist from segments
+         if (isDevelopmentStreaming()) {
+            playlistContent = await this.cacheService.getCachedPlaylist(chapterId, bitrate) ?? '';
+            if (!playlistContent) {
+               playlistContent = await this.generateVariantPlaylist(chapterId, bitrate, transcodedChapter);
+               await this.cacheService.cachePlaylist(chapterId, bitrate, playlistContent);
+            }
+         } else {
             playlistContent = await this.generateVariantPlaylist(chapterId, bitrate, transcodedChapter);
-
-            // Cache the playlist
-            await this.cacheService.cachePlaylist(chapterId, bitrate, playlistContent);
          }
 
          return {
             contentType: 'application/vnd.apple.mpegurl',
             content: playlistContent,
             headers: {
-               'Cache-Control': 'public, max-age=60', // 1 minute
+               'Cache-Control': getPlaylistResponseCacheControl(),
                'Access-Control-Allow-Origin': '*',
                'Access-Control-Allow-Headers': 'Range, Content-Range'
             },
@@ -183,6 +194,23 @@ export class HLSStreamingService {
 
          if (!transcodedChapter || transcodedChapter.status !== 'completed') {
             return this.createErrorResponse('Transcoded version not available', 404);
+         }
+
+         if (!isDevelopmentStreaming()) {
+            const segmentKey = buildVariantStorageKey(chapterId, bitrate, segmentId);
+            const presignedUrl = await getPresignedObjectUrl(segmentKey, this.storageProvider);
+            const contentType = segmentId.endsWith('.m4s') ? 'video/mp4' : 'video/mp2t';
+
+            return {
+               contentType,
+               content: '',
+               headers: {
+                  Location: presignedUrl,
+                  'Cache-Control': 'private, no-cache, no-store',
+                  'Access-Control-Allow-Origin': '*',
+               },
+               statusCode: 302,
+            };
          }
 
          // Construct storage path for segment
@@ -365,19 +393,43 @@ export class HLSStreamingService {
          : bitrateInfos;
 
       // Generate master playlist content (CMAF-compliant HLS)
-      const baseUrl = config.STREAMING_BASE_URL;
-      let masterPlaylist = '#EXTM3U\n#EXT-X-VERSION:7\n\n';
+      let masterPlaylist: string;
 
-      for (const bitrateInfo of playlistVariants) {
-         masterPlaylist += `#EXT-X-STREAM-INF:BANDWIDTH=${bitrateInfo.bandwidth},CODECS="mp4a.40.2"`;
+      if (isDevelopmentStreaming()) {
+         const baseUrl = config.STREAMING_BASE_URL;
+         masterPlaylist = '#EXTM3U\n#EXT-X-VERSION:7\n\n';
 
-         if (bitrateInfo.bitrate === recommendedBitrate) {
-            masterPlaylist += ',RESOLUTION=0x0';
+         for (const bitrateInfo of playlistVariants) {
+            masterPlaylist += `#EXT-X-STREAM-INF:BANDWIDTH=${bitrateInfo.bandwidth},CODECS="mp4a.40.2"`;
+
+            if (bitrateInfo.bitrate === recommendedBitrate) {
+               masterPlaylist += ',RESOLUTION=0x0';
+            }
+
+            const playlistUrl = `${baseUrl}/bit_transcode/${chapterId}/${bitrateInfo.bitrate}k/playlist.m3u8`;
+            masterPlaylist += `\n${playlistUrl}\n\n`;
+         }
+      } else {
+         const bitrates = playlistVariants.map((bi) => bi.bitrate);
+         const segmentFilesByBitrate = new Map<number, string[]>();
+
+         for (const bitrateInfo of playlistVariants) {
+            const segments = await this.storageProvider.listFiles(bitrateInfo.segmentsPath);
+            const segmentFiles = segments
+               .filter(seg => seg.endsWith('.m4s') || seg.endsWith('.ts'))
+               .map(seg => seg.split('/').pop()!)
+               .filter(Boolean)
+               .sort();
+            segmentFilesByBitrate.set(bitrateInfo.bitrate, segmentFiles);
          }
 
-         // Use complete absolute URL for playlist
-         const playlistUrl = `${baseUrl}/bit_transcode/${chapterId}/${bitrateInfo.bitrate}k/playlist.m3u8`;
-         masterPlaylist += `\n${playlistUrl}\n\n`;
+         masterPlaylist = await presignMasterPlaylistUrls(
+            chapterId,
+            bitrates,
+            this.storageProvider,
+            recommendedBitrate,
+            segmentFilesByBitrate,
+         );
       }
 
       return {
@@ -394,48 +446,44 @@ export class HLSStreamingService {
    private async generateVariantPlaylist(
       chapterId: string,
       bitrate: number,
-      transcodedChapter: any
+      transcodedChapter: { segmentsPath: string }
    ): Promise<string> {
       try {
-         // List segments in storage
          const segments = await this.storageProvider.listFiles(transcodedChapter.segmentsPath);
-         const segmentFiles = segments.filter(seg => seg.endsWith('.m4s') || seg.endsWith('.ts')).sort();
+         const segmentFiles = segments
+            .filter(seg => seg.endsWith('.m4s') || seg.endsWith('.ts'))
+            .map(seg => seg.split('/').pop()!)
+            .filter(Boolean)
+            .sort();
 
-         // Extract chapterId and bitrate from segmentsPath if not provided
-         // segmentsPath is like: bit_transcode/{chapterId}/{bitrate}k/
          let extractedChapterId = chapterId;
          let extractedBitrate = bitrate;
 
          if (transcodedChapter.segmentsPath) {
             const pathMatch = transcodedChapter.segmentsPath.match(/(?:uploads\/)?bit_transcode\/([^/]+)\/(\d+)k/);
             if (pathMatch) {
-               extractedChapterId = pathMatch[1];
-               extractedBitrate = parseInt(pathMatch[2], 10);
+               extractedChapterId = pathMatch[1] ?? chapterId;
+               extractedBitrate = parseInt(pathMatch[2] ?? String(bitrate), 10);
             }
          }
 
-         // Construct base URL for segments
-         const baseUrl = config.STREAMING_BASE_URL;
-         const segmentsBasePath = `bit_transcode/${extractedChapterId}/${extractedBitrate}k`;
-
-         // Find init.mp4 file in the segments path
-         const initFiles = segments.filter(seg => seg.includes('init.mp4') || seg.endsWith('/init.mp4'));
-         let initUri = `${baseUrl}/${segmentsBasePath}/init.mp4`; // Default absolute URL
-
-         if (initFiles.length > 0) {
-            // Use absolute URL for init file
-            initUri = `${baseUrl}/${segmentsBasePath}/init.mp4`;
+         if (!isDevelopmentStreaming()) {
+            return presignVariantPlaylistUrls(
+               extractedChapterId,
+               extractedBitrate,
+               segmentFiles,
+               this.storageProvider,
+            );
          }
 
-         // EXT-X-TARGETDURATION should be at least as large as the longest segment duration
-         // Using 5 seconds to accommodate 4-second segments with some buffer
+         const baseUrl = config.STREAMING_BASE_URL;
+         const segmentsBasePath = `bit_transcode/${extractedChapterId}/${extractedBitrate}k`;
+         const initUri = `${baseUrl}/${segmentsBasePath}/init.mp4`;
+
          let playlist = `#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:5\n#EXT-X-MAP:URI="${initUri}"\n\n`;
 
-         for (const segmentFile of segmentFiles) {
-            const segmentName = segmentFile.split('/').pop();
-            // Construct absolute URL for segment
+         for (const segmentName of segmentFiles) {
             const segmentUrl = `${baseUrl}/${segmentsBasePath}/${segmentName}`;
-            // Use config value for segment duration to match actual transcoded segments
             playlist += `#EXTINF:${config.HLS_SEGMENT_DURATION}.0,\n${segmentUrl}\n`;
          }
 

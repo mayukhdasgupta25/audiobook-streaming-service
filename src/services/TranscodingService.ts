@@ -9,6 +9,12 @@ import { StorageProvider } from './storage/StorageProvider';
 import { StorageFactory } from './storage/StorageFactory';
 import { config } from '../config/env';
 import { toStorageKey, resolveStorageCandidateKeys } from '../utils/storageKeys';
+import {
+   isDevelopmentStreaming,
+   getTranscodeWorkspaceDir,
+   getBitrateWorkspaceDir,
+   buildVariantStorageKey,
+} from '../utils/streamingStorage';
 import { resolveChapterSourceLocalPath } from '../utils/chapterSourceFile';
 import { PrismaClient } from '@prisma/client';
 import { logger } from '../config/logger';
@@ -127,7 +133,7 @@ export class TranscodingService {
          const tempInputPath = await this.downloadToTemp(inputPath);
 
          // Create output directory structure
-         await this.ensureOutputDirectory(outputDir);
+         await this.ensureOutputDirectory(id);
 
          const variantPlaylists: Array<{
             bitrate: number;
@@ -221,7 +227,7 @@ export class TranscodingService {
          const tempInputPath = await this.downloadToTemp(inputPath);
 
          // Create output directory structure
-         await this.ensureOutputDirectory(outputDir);
+         await this.ensureOutputDirectory(id);
 
          logger.info({ bitrate, chapterId: id }, 'Starting single bitrate transcoding for chapter');
 
@@ -259,18 +265,18 @@ export class TranscodingService {
       playlist: string;
       segments: string[];
    }> {
-      const { inputPath, outputDir, bitrate, segmentDuration, id } = options;
+      const { inputPath, outputDir: _outputDir, bitrate, segmentDuration, id } = options;
 
       await this.bitrateRepo.markProcessing(id, bitrate);
       await this.eventPublisher.publishStatusTransition(id, bitrate, 'processing', 0);
 
       return new Promise((resolve, reject) => {
-         const bitrateDir = path.join(process.cwd(), config.LOCAL_STORAGE_PATH, outputDir, `${bitrate}k`);
+         const bitrateDir = getBitrateWorkspaceDir(id, bitrate);
          const playlistPath = path.join(bitrateDir, 'playlist.m3u8');
          const segmentPattern = path.join(bitrateDir, 'segment_%03d.m4s');
 
          // Ensure bitrate directory exists
-         this.ensureOutputDirectory(path.join(outputDir, `${bitrate}k`));
+         void this.ensureOutputDirectory(id, `${bitrate}k`);
 
          // Determine audio channels: mono (1) for 64k, stereo (2) for others
          const audioChannels = bitrate === 64 ? 1 : 2;
@@ -334,36 +340,32 @@ export class TranscodingService {
                      'init.mp4'
                   );
 
-                  // Convert relative paths to absolute URLs
-                  const baseUrl = config.STREAMING_BASE_URL;
-                  const segmentsBasePath = `bit_transcode/${id}/${bitrate}k`;
+                  // In development only, rewrite relative paths to STREAMING_BASE_URL for static serving
+                  if (isDevelopmentStreaming()) {
+                     const baseUrl = config.STREAMING_BASE_URL;
+                     const segmentsBasePath = `bit_transcode/${id}/${bitrate}k`;
 
-                  // Replace init.mp4 in #EXT-X-MAP:URI with absolute URL
-                  playlistContent = playlistContent.replace(
-                     /#EXT-X-MAP:URI="([^"]+)"/g,
-                     (match, uri) => {
-                        // If URI is already absolute, keep it; otherwise make it absolute
-                        if (uri.startsWith('http://') || uri.startsWith('https://')) {
-                           return match;
+                     playlistContent = playlistContent.replace(
+                        /#EXT-X-MAP:URI="([^"]+)"/g,
+                        (match, uri) => {
+                           if (uri.startsWith('http://') || uri.startsWith('https://')) {
+                              return match;
+                           }
+                           const absoluteUri = uri === 'init.mp4'
+                              ? `${baseUrl}/${segmentsBasePath}/init.mp4`
+                              : `${baseUrl}/${segmentsBasePath}/${uri}`;
+                           return `#EXT-X-MAP:URI="${absoluteUri}"`;
                         }
-                        const absoluteUri = uri === 'init.mp4'
-                           ? `${baseUrl}/${segmentsBasePath}/init.mp4`
-                           : `${baseUrl}/${segmentsBasePath}/${uri}`;
-                        return `#EXT-X-MAP:URI="${absoluteUri}"`;
-                     }
-                  );
+                     );
 
-                  // Replace relative segment paths with absolute URLs
-                  // Match lines that are segment filenames (not starting with #)
-                  playlistContent = playlistContent.split('\n').map(line => {
-                     const trimmedLine = line.trim();
-                     // Skip if line is empty, starts with #, or is already an absolute URL
-                     if (!trimmedLine || trimmedLine.startsWith('#') || trimmedLine.startsWith('http://') || trimmedLine.startsWith('https://')) {
-                        return line;
-                     }
-                     // This is a segment filename, convert to absolute URL
-                     return `${baseUrl}/${segmentsBasePath}/${trimmedLine}`;
-                  }).join('\n');
+                     playlistContent = playlistContent.split('\n').map(line => {
+                        const trimmedLine = line.trim();
+                        if (!trimmedLine || trimmedLine.startsWith('#') || trimmedLine.startsWith('http://') || trimmedLine.startsWith('https://')) {
+                           return line;
+                        }
+                        return `${baseUrl}/${segmentsBasePath}/${trimmedLine}`;
+                     }).join('\n');
+                  }
 
                   // Write updated playlist content back to file
                   await fs.writeFile(playlistPath, playlistContent, 'utf-8');
@@ -373,9 +375,10 @@ export class TranscodingService {
                   await this.eventPublisher.publishProgress(id, bitrate, 88, { force: true });
                   await this.bitrateRepo.commitCompletedLocal(id, bitrate);
 
-                  if (config.NODE_ENV !== 'development' && config.STORAGE_PROVIDER !== 'local') {
+                  if (!isDevelopmentStreaming()) {
                      await this.uploadTranscodedFilesWithProgress(bitrateDir, id, bitrate);
                      await this.bitrateRepo.markStoredOnS3(id, bitrate);
+                     await this.cleanupChapterWorkspace(id);
                   }
 
                   await this.eventPublisher.publishStatusTransition(id, bitrate, 'completed', 100);
@@ -434,14 +437,12 @@ export class TranscodingService {
 
       for (const file of uploadable) {
          const filePath = path.join(bitrateDir, file);
-         const relativePath = toStorageKey(
-            path.relative(path.join(process.cwd(), config.LOCAL_STORAGE_PATH), filePath).replace(/\\/g, '/')
-         );
+         const storageKey = buildVariantStorageKey(chapterId, bitrate, file);
          const content = await fs.readFile(filePath);
          const contentType = file.endsWith('.m3u8')
             ? 'application/vnd.apple.mpegurl'
             : 'video/mp4';
-         await this.storageProvider!.uploadFile(relativePath, content, contentType);
+         await this.storageProvider!.uploadFile(storageKey, content, contentType);
          uploaded += 1;
          const uploadProgress = 91 + Math.round((uploaded / uploadable.length) * 8);
          await this.bitrateRepo.updateProgress(chapterId, bitrate, uploadProgress);
@@ -538,13 +539,13 @@ export class TranscodingService {
       variantPlaylists: Array<{ bitrate: number; playlist: string; segments: string[] }>,
       chapterId: string
    ): string {
-      const baseUrl = config.STREAMING_BASE_URL;
       let masterPlaylist = '#EXTM3U\n#EXT-X-VERSION:7\n\n';
 
       for (const variant of variantPlaylists) {
-         const bandwidth = variant.bitrate * 1000; // Convert kbps to bps
-         // Use complete absolute URL for playlist
-         const playlistUrl = `${baseUrl}/bit_transcode/${chapterId}/${variant.bitrate}k/playlist.m3u8`;
+         const bandwidth = variant.bitrate * 1000;
+         const playlistUrl = isDevelopmentStreaming()
+            ? `${config.STREAMING_BASE_URL}/bit_transcode/${chapterId}/${variant.bitrate}k/playlist.m3u8`
+            : `${variant.bitrate}k/playlist.m3u8`;
 
          masterPlaylist += `#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},CODECS="mp4a.40.2"\n`;
          masterPlaylist += `${playlistUrl}\n\n`;
@@ -749,15 +750,38 @@ export class TranscodingService {
    }
 
    /**
-    * Ensure output directory exists
+    * Ensure output directory exists (dev under ./storage, non-dev under OS temp).
     */
-   private async ensureOutputDirectory(outputDir: string): Promise<void> {
+   private async ensureOutputDirectory(chapterId: string, subPath?: string): Promise<void> {
       try {
-         const fullPath = path.join(process.cwd(), config.LOCAL_STORAGE_PATH, outputDir);
+         const basePath = getTranscodeWorkspaceDir(chapterId);
+         const fullPath = subPath ? path.join(basePath, subPath) : basePath;
          await fs.mkdir(fullPath, { recursive: true });
       } catch (error: any) {
          logger.error({ err: error }, 'Error creating output directory');
          throw error;
+      }
+   }
+
+   /**
+    * Remove empty chapter workspace directory after non-dev upload.
+    */
+   private async cleanupChapterWorkspace(chapterId: string): Promise<void> {
+      if (isDevelopmentStreaming()) {
+         return;
+      }
+
+      try {
+         const workspaceDir = getTranscodeWorkspaceDir(chapterId);
+         const entries = await fs.readdir(workspaceDir);
+         if (entries.length === 0) {
+            await fs.rmdir(workspaceDir);
+            logger.info({ workspaceDir, chapterId }, 'Cleaned up empty transcode workspace');
+         }
+      } catch (error: any) {
+         if (error.code !== 'ENOENT') {
+            logger.error({ err: error, chapterId }, 'Error cleaning up chapter workspace');
+         }
       }
    }
 
