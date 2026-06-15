@@ -74,4 +74,39 @@ describe('ChapterDeletionWorker', () => {
       expect(prisma.streamingSession.deleteMany).toHaveBeenCalledWith({ where: { chapterId: 'chapter-123' } });
       expect(prisma.transcodedChapter.deleteMany).toHaveBeenCalledWith({ where: { chapterId: 'chapter-123' } });
    });
+
+   it('propagates S3 cleanup errors so RabbitMQ can retry the message', async () => {
+      mockCleanupChapterArtifacts.mockRejectedValueOnce(new Error('S3 cleanup failed'));
+
+      const prisma = {
+         transcodingJob: {
+            deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+         },
+         streamingSession: {
+            deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+         },
+         transcodedChapter: {
+            deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+         },
+      };
+
+      const worker = new ChapterDeletionWorker(prisma as never);
+
+      await expect(
+         (
+            worker as unknown as {
+               processChapterDeletion: (
+                  message: { chapterId: string; timestamp: string },
+                  raw: unknown
+               ) => Promise<void>;
+            }
+         ).processChapterDeletion(
+            { chapterId: 'chapter-123', timestamp: new Date().toISOString() },
+            {}
+         )
+      ).rejects.toThrow('S3 cleanup failed');
+
+      expect(prisma.transcodingJob.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.transcodedChapter.deleteMany).not.toHaveBeenCalled();
+   });
 });

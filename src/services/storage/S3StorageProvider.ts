@@ -30,15 +30,13 @@ export class S3StorageProvider implements StorageProvider {
       this.bucket = bucket;
       this.region = region;
 
-      const s3Config: { region: string; endpoint?: string } = {
+      this.s3Client = new S3Client({
          region: this.region,
-      };
-
-      if (endpoint) {
-         s3Config.endpoint = endpoint;
-      }
-
-      this.s3Client = new S3Client(s3Config);
+         ...(endpoint && {
+            endpoint,
+            forcePathStyle: true,
+         }),
+      });
    }
 
    /**
@@ -172,7 +170,7 @@ export class S3StorageProvider implements StorageProvider {
    }
 
    /**
-    * Get a public URL for a file
+    * Presigns a GET URL using AWS SDK v3 (Signature Version 4 only).
     */
    async getFileUrl(filePath: string, expiresIn: number = config.AWS_SIGNED_URL_EXPIRES_IN): Promise<string> {
       try {

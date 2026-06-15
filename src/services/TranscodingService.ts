@@ -8,7 +8,7 @@ import fs from 'fs/promises';
 import { StorageProvider } from './storage/StorageProvider';
 import { StorageFactory } from './storage/StorageFactory';
 import { config } from '../config/env';
-import { toStorageKey, resolveStorageCandidateKeys } from '../utils/storageKeys';
+import { toStorageKey, resolveStorageCandidateKeys, resolveExistingStorageKey } from '../utils/storageKeys';
 import {
    isDevelopmentStreaming,
    getTranscodeWorkspaceDir,
@@ -55,6 +55,7 @@ export class TranscodingService {
    private storageProvider: StorageProvider | null = null;
    private readonly bitrateRepo: BitrateTranscodingRepository;
    private readonly eventPublisher: TranscodingEventPublisher;
+   private readonly chapterSourceKeyByPath = new Map<string, string>();
 
    constructor(prisma: PrismaClient) {
       this.prisma = prisma;
@@ -70,6 +71,22 @@ export class TranscodingService {
          await StorageFactory.initialize();
          this.storageProvider = StorageFactory.getStorageProvider();
       }
+   }
+
+   private async resolveChapterSourceStorageKey(filePath: string): Promise<string> {
+      const cached = this.chapterSourceKeyByPath.get(filePath);
+      if (cached) {
+         return cached;
+      }
+
+      await this.initializeStorageProvider();
+      const storageKey = await resolveExistingStorageKey(filePath, this.storageProvider!);
+      if (!storageKey) {
+         throw new Error(`Input file not found in storage at path: ${filePath}`);
+      }
+
+      this.chapterSourceKeyByPath.set(filePath, storageKey);
+      return storageKey;
    }
 
    /**
@@ -102,6 +119,7 @@ export class TranscodingService {
             );
             await fs.mkdir(path.dirname(targetPath), { recursive: true });
             await fs.writeFile(targetPath, fileContent);
+            this.chapterSourceKeyByPath.set(filePath, providerPath);
             logger.info({ targetPath, providerPath }, 'Chapter source downloaded into streaming storage');
             return;
          }
@@ -109,13 +127,8 @@ export class TranscodingService {
          throw new Error(`Input file not found in storage at path: ${filePath}`);
       }
 
-      const storageKey = toStorageKey(filePath);
-      const fileExists = await this.storageProvider!.fileExists(storageKey);
-      if (!fileExists) {
-         throw new Error(`Input file not found in storage at path: ${filePath}`);
-      }
-
-      logger.info({ filePath }, 'File verified in storage');
+      const storageKey = await this.resolveChapterSourceStorageKey(filePath);
+      logger.info({ filePath, storageKey }, 'File verified in storage');
    }
 
    /**
@@ -125,6 +138,8 @@ export class TranscodingService {
       const { inputPath, outputDir, bitrates, segmentDuration, id, userId } = options;
 
       try {
+         this.chapterSourceKeyByPath.delete(inputPath);
+
          // Initialize storage provider
          await this.initializeStorageProvider();
 
@@ -198,6 +213,8 @@ export class TranscodingService {
       } catch (error: any) {
          logger.error({ err: error }, 'Transcoding failed');
          throw new Error(`Transcoding failed: ${error.message}`);
+      } finally {
+         this.chapterSourceKeyByPath.delete(inputPath);
       }
    }
 
@@ -219,6 +236,8 @@ export class TranscodingService {
       const { inputPath, outputDir, bitrate, segmentDuration, id, userId } = options;
 
       try {
+         this.chapterSourceKeyByPath.delete(inputPath);
+
          // Initialize storage provider
          await this.initializeStorageProvider();
 
@@ -251,6 +270,8 @@ export class TranscodingService {
       } catch (error: any) {
          logger.error({ err: error, bitrate }, 'Single bitrate transcoding failed for bitrate');
          throw new Error(`Single bitrate transcoding failed: ${error.message}`);
+      } finally {
+         this.chapterSourceKeyByPath.delete(inputPath);
       }
    }
    private async transcodeToBitrate(options: {
@@ -444,7 +465,9 @@ export class TranscodingService {
             : 'video/mp4';
          await this.storageProvider!.uploadFile(storageKey, content, contentType);
          uploaded += 1;
-         const uploadProgress = 91 + Math.round((uploaded / uploadable.length) * 8);
+         const uploadProgress = uploaded === uploadable.length
+            ? 99
+            : 91 + Math.round(((uploaded - 1) / Math.max(uploadable.length - 1, 1)) * 7);
          await this.bitrateRepo.updateProgress(chapterId, bitrate, uploadProgress);
          await this.eventPublisher.publishProgress(chapterId, bitrate, uploadProgress, { force: true });
       }
@@ -692,7 +715,10 @@ export class TranscodingService {
             }
          }
 
-         const fileContent = await this.storageProvider!.downloadFile(toStorageKey(filePath));
+         const storageKey = config.NODE_ENV === 'development'
+            ? toStorageKey(filePath)
+            : await this.resolveChapterSourceStorageKey(filePath);
+         const fileContent = await this.storageProvider!.downloadFile(storageKey);
          await fs.writeFile(tempPath, fileContent);
 
          return tempPath;
