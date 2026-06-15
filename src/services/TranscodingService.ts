@@ -464,7 +464,9 @@ export class TranscodingService {
             : 'video/mp4';
          await this.storageProvider!.uploadFile(relativePath, content, contentType);
          uploaded += 1;
-         const uploadProgress = 91 + Math.round((uploaded / uploadable.length) * 8);
+         const uploadProgress = uploaded === uploadable.length
+            ? 99
+            : 91 + Math.round(((uploaded - 1) / Math.max(uploadable.length - 1, 1)) * 7);
          await this.bitrateRepo.updateProgress(chapterId, bitrate, uploadProgress);
          await this.eventPublisher.publishProgress(chapterId, bitrate, uploadProgress, { force: true });
       }

@@ -14,6 +14,7 @@ process.env['REDIS_URL'] = 'redis://localhost:6379';
 process.env['REDIS_PASSWORD'] = '';
 
 process.env['RABBITMQ_URL'] = 'amqp://localhost:5672';
+process.env['RABBITMQ_QUEUE_PREFIX'] = 'audiobook';
 process.env['RABBITMQ_MESSAGE_TTL'] = '3600000';
 
 process.env['BULL_REDIS_HOST'] = 'redis://localhost:6379';

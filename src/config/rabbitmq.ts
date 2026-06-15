@@ -31,6 +31,10 @@ export interface ChapterDeletionMessage {
    timestamp: string;
 }
 
+export function getChapterDeletionQueueName(): string {
+   return `${config.RABBITMQ_QUEUE_PREFIX}.chapters.deleted`;
+}
+
 export class RabbitMQConnection {
    private static instance: RabbitMQConnection;
    private connection: amqp.Connection | null = null;
@@ -116,23 +120,30 @@ export class RabbitMQConnection {
          });
 
          // Try to create queues with TTL first, fallback to basic configuration if conflicts exist
+         const queuePrefix = config.RABBITMQ_QUEUE_PREFIX;
          const queues = [
-            'audiobook.transcode.priority',
-            'audiobook.transcode.normal',
-            'audiobook.transcode.low'
+            `${queuePrefix}.transcode.priority`,
+            `${queuePrefix}.transcode.normal`,
+            `${queuePrefix}.transcode.low`,
          ];
 
          for (const queueName of queues) {
             await this.assertQueueWithFallback(queueName);
          }
 
-         // Setup chapter deletion queue
-         await this.assertQueueWithFallback('audiobook.chapters.deleted');
+         // Setup chapter deletion queue and bind to chapters exchange
+         const chapterDeletionQueue = getChapterDeletionQueueName();
+         await this.channel.assertExchange('chapters', 'topic', {
+            durable: true,
+            autoDelete: false,
+         });
+         await this.assertQueueWithFallback(chapterDeletionQueue);
+         await this.channel.bindQueue(chapterDeletionQueue, 'chapters', 'chapter.deleted');
 
-         // Bind queues to exchange
-         await this.channel.bindQueue('audiobook.transcode.priority', 'transcoding.exchange', 'priority');
-         await this.channel.bindQueue('audiobook.transcode.normal', 'transcoding.exchange', 'normal');
-         await this.channel.bindQueue('audiobook.transcode.low', 'transcoding.exchange', 'low');
+         // Bind transcoding queues to exchange
+         await this.channel.bindQueue(`${queuePrefix}.transcode.priority`, 'transcoding.exchange', 'priority');
+         await this.channel.bindQueue(`${queuePrefix}.transcode.normal`, 'transcoding.exchange', 'normal');
+         await this.channel.bindQueue(`${queuePrefix}.transcode.low`, 'transcoding.exchange', 'low');
 
          rabbitmqLogger.info('RabbitMQ exchanges and queues setup completed');
       } catch (error: any) {
@@ -152,10 +163,10 @@ export class RabbitMQConnection {
       // Different queues may have different TTL configurations
       // Map queue names to their expected TTL values
       const queueTTLMap: { [key: string]: number } = {
-         'audiobook.transcode.priority': 3600000, // 1 hour
-         'audiobook.transcode.normal': 3600000,    // 1 hour  
-         'audiobook.transcode.low': 7200000,       // 2 hours
-         'audiobook.chapters.deleted': 3600000     // 1 hour (matches existing queue configuration)
+         [`${config.RABBITMQ_QUEUE_PREFIX}.transcode.priority`]: 3600000, // 1 hour
+         [`${config.RABBITMQ_QUEUE_PREFIX}.transcode.normal`]: 3600000,    // 1 hour
+         [`${config.RABBITMQ_QUEUE_PREFIX}.transcode.low`]: 7200000,       // 2 hours
+         [getChapterDeletionQueueName()]: 3600000     // 1 hour (matches existing queue configuration)
       };
 
       const ttl = queueTTLMap[queueName] || config.RABBITMQ_MESSAGE_TTL;
@@ -255,7 +266,7 @@ export class RabbitMQConnection {
          throw new Error('Channel not available');
       }
 
-      const fullQueueName = `audiobook.transcode.${queueName}`;
+      const fullQueueName = `${config.RABBITMQ_QUEUE_PREFIX}.transcode.${queueName}`;
 
       try {
          await this.channel.consume(fullQueueName, async (message: amqp.Message | null) => {
@@ -349,7 +360,7 @@ export class RabbitMQConnection {
 
       for (const queue of queues) {
          try {
-            const queueInfo = await this.channel.checkQueue(`audiobook.transcode.${queue}`);
+            const queueInfo = await this.channel.checkQueue(`${config.RABBITMQ_QUEUE_PREFIX}.transcode.${queue}`);
             stats[queue] = {
                messageCount: queueInfo.messageCount,
                consumerCount: queueInfo.consumerCount
